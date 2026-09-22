@@ -27,11 +27,13 @@ final class WildFlyRunState extends CommandLineState implements RemoteConnection
     }
 
     @Override protected @NotNull ProcessHandler startProcess() {
-        return new WildFlySessionProcessHandler(() -> {
+        var handler = new WildFlySessionProcessHandler(() -> {
             if (getEnvironment().getProject().isDisposed()) throw new ExecutionException("Project closed before WildFly started.");
             var result = WildFlyProcessService.getInstance().startForExecution(profile, debug);
             return new WildFlySessionProcessHandler.Launch(result.handler(), result.ownsProcess());
         }, command -> ApplicationManager.getApplication().executeOnPooledThread(command));
+        getEnvironment().getProject().getService(WildFlySessionService.class).register(handler);
+        return handler;
     }
 
     @Override public @NotNull ExecutionResult execute(@NotNull Executor executor, @NotNull ProgramRunner<?> runner) throws ExecutionException {

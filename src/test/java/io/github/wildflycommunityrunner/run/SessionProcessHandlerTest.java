@@ -106,4 +106,27 @@ public class SessionProcessHandlerTest extends BasePlatformTestCase {
         session.begin();
         assertEquals(Integer.valueOf(1), session.getExitCode());
     }
+
+    public void testProjectSessionDisposalCancelsPendingLaunchAndDetachesActiveServer() {
+        var service = new WildFlySessionService();
+        var pending = new ArrayDeque<Runnable>();
+        var launches = new AtomicInteger();
+        var queued = new WildFlySessionProcessHandler(() -> {
+            launches.incrementAndGet();
+            return new WildFlySessionProcessHandler.Launch(new FakeProcess(), true);
+        }, pending::add);
+        service.register(queued);
+        queued.begin();
+        var process = new FakeProcess();
+        var active = new WildFlySessionProcessHandler(() -> new WildFlySessionProcessHandler.Launch(process, true), Runnable::run);
+        service.register(active);
+        active.begin();
+        service.dispose();
+        pending.remove().run();
+        assertEquals(0, launches.get());
+        assertTrue(queued.isProcessTerminated());
+        assertTrue(active.isProcessTerminated());
+        assertFalse(process.isProcessTerminated());
+        process.exit(0);
+    }
 }
