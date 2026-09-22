@@ -129,6 +129,8 @@ public final class BuildOperation {
     /** Project disposal must not wait for an IDE launch queue that is itself being disposed. */
     public void dispose() {
         cancel();
-        finish(new Result(Outcome.CANCELLED, "Project closed"));
+        boolean pendingLaunch;
+        synchronized (this) { pendingLaunch = process == null; }
+        if (pendingLaunch) finish(new Result(Outcome.CANCELLED, "Project closed"));
     }
 }

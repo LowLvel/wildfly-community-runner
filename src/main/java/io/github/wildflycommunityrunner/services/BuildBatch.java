@@ -113,7 +113,10 @@ public final class BuildBatch {
     public synchronized void dispose() {
         cancel();
         if (operation != null) operation.dispose();
-        finish(BuildOperation.Outcome.CANCELLED, "Project closed", false);
+        // Other projects may watch this source. Hold its global lease until actual completion.
+        if (!deploying && (operation == null || operation.completion().isDone())) {
+            finish(BuildOperation.Outcome.CANCELLED, "Project closed", false);
+        }
     }
 
     private void failed(Throwable error) {

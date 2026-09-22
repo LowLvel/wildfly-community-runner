@@ -70,8 +70,7 @@ public final class BuildLifecycleService implements Disposable {
                 return result;
             }
             @Override public Runnable suppress(ServiceProfile service) {
-                watcher.suppress(service);
-                return () -> watcher.releaseSuppression(service);
+                return watcher.suppress(service);
             }
         };
         var batch = new BuildBatch(services, server, mode, external, backend,

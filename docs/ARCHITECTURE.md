@@ -16,7 +16,14 @@ service's wrapper (searched in ancestor directories), then system Gradle.
   inspects externally running servers.
 - `ArtifactAutoDeployService` is a disposable project service with one blocking
   WatchService thread and one scheduled worker. It watches final artifacts, not
-  source files. Explicit build modes suppress automatic deployment.
+  source files. Generation-scoped slots retain changes during in-flight work and
+  expire queued work when settings change. Output-directory recovery rescans only
+  deployable outputs. `ArtifactFingerprint` checks stable archive content.
+- `DeploymentCoordinator` is application-wide: counted source suppression leases,
+  shared automatic-deployment ownership, bounded successful-fingerprint caches,
+  and per-target scanner locks coordinate multiple project windows. Other targets
+  continue independently while a request waits for WildFly. Copy validation preserves the previous
+  scanner artifact when the source changes mid-copy.
 
 ## Operations
 

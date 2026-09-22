@@ -126,7 +126,7 @@ public class BuildBatchTest extends BasePlatformTestCase {
         assertEquals(0, h.releases);
         var active = h.batch(BuildBatch.Mode.FORCE_DEPLOY, false); h.drain(); h.exit(0);
         active.dispose();
-        assertEquals(1, h.releases);
+        assertEquals(0, h.releases);
         h.deploys.getFirst().complete(true); h.drain();
         assertEquals(1, h.releases);
         assertEquals(BuildOperation.Outcome.CANCELLED, active.completion().join().outcome());

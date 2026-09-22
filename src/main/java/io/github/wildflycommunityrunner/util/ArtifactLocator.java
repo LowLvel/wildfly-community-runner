@@ -20,7 +20,10 @@ public final class ArtifactLocator {
     private ArtifactLocator() {}
 
     public static Path resolve(Project project, ServiceProfile service) throws IOException {
-        Path moduleDir = BuildService.resolveModuleDir(project, service);
+        return resolveInModule(BuildService.resolveModuleDir(project, service), service);
+    }
+
+    public static Path resolveInModule(Path moduleDir, ServiceProfile service) throws IOException {
 
         if (service.artifactPath != null && !service.artifactPath.isBlank()) {
             Path configured = Path.of(service.artifactPath);

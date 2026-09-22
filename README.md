@@ -128,9 +128,30 @@ backend › orders › api   —  orders-api
 
 Auto Redeploy is event-driven rather than a polling loop. The plugin registers the service output directory with Java's `WatchService` (`target/`, `build/libs/`, or the parent of an explicit artifact override). Source files are not watched.
 
-When the final WAR/EAR/JAR changes, events are debounced and the artifact size/mtime are sampled until stable before deployment. This means Maven builds started from IntelliJ's Maven tab, Gradle builds, terminal builds, and plugin builds can all trigger the same Auto Redeploy behavior. Explicit **Build and Deploy** / **Build without Deploy** actions temporarily suppress the watcher so they do not cause duplicate or unwanted redeploys.
+When the final WAR/EAR/JAR changes, events are debounced, the file is sampled for
+stability, and its ZIP structure and SHA-256 fingerprint are checked. The scanner
+copy must match that fingerprint before replacing the previous deployment copy.
+This catches changed content even when file size and timestamp are unchanged.
+An unstable or incomplete archive is retried within a bounded window; rebuilding
+the final artifact triggers a new check.
 
-Resource usage is intentionally small: one blocking watcher thread and one lightweight scheduled worker per IntelliJ project that has Auto-enabled services; there is no periodic scan of service trees.
+Changes arriving during a deployment are retained for a follow-up check. Deleted
+output directories and watcher overflow trigger re-registration and an artifact
+rescan. Initial project setup does not deploy pre-existing artifacts. Source
+changes alone do not trigger deployment, including while the watcher temporarily
+observes an output directory's parent. Gradle's `build/` artifact fallback is
+covered alongside `build/libs/`.
+
+Open projects coordinate automatic requests for the same deployment. Explicit
+**Build and Deploy** / **Build without Deploy** suppression follows the source
+across projects, uses counted leases, and records the final build fingerprint
+after a short settling period. Manual and automatic scanner operations targeting
+the same deployment run sequentially. Failed automatic deployments are retried
+when artifact content changes; use **Redeploy** to retry unchanged output.
+
+Resource usage is bounded: a blocking watcher and scheduled worker per configured
+project, plus one application-wide suppression scheduler and a bounded cache of
+successful automatic deployments. There is no periodic scan of source trees.
 
 ## Deployment / hot redeploy
 

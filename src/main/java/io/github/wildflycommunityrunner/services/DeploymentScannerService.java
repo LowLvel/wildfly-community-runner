@@ -37,8 +37,14 @@ public final class DeploymentScannerService {
                               String deploymentName,
                               Consumer<String> output,
                               Consumer<Boolean> completion) {
+        deploy(project, profile, artifact, deploymentName, output, completion, null);
+    }
+
+    static void deploy(Project project, ServerProfile profile, Path artifact, String deploymentName,
+                       Consumer<String> output, Consumer<Boolean> completion, ArtifactFingerprint expected) {
         ServerProfile snapshot = new ServerProfile(profile);
-        submit(project, "Deployment failed", output, completion, () -> {
+        submitTarget(project, snapshot, deploymentName == null || deploymentName.isBlank() ? artifact.getFileName().toString() : deploymentName,
+                "Deployment failed", output, completion, () -> {
             boolean success = false;
             Path deployments = WildFlyPaths.deploymentsDir(snapshot);
             Files.createDirectories(deployments);
@@ -51,7 +57,7 @@ public final class DeploymentScannerService {
             out(output, "Hot redeploy: " + artifact + " -> " + target);
             Files.deleteIfExists(deployments.resolve(name + ".failed"));
             Files.deleteIfExists(deployments.resolve(name + ".undeployed"));
-            replaceArtifactSafely(artifact, target);
+            replaceArtifactSafely(artifact, target, expected);
             createRequestMarker(deployments.resolve(name + ".dodeploy"));
             success = waitForDeployment(project, deployments, name, previousDeployedStamp, output);
             return success;
@@ -64,7 +70,7 @@ public final class DeploymentScannerService {
                                 Consumer<String> output,
                                 Consumer<Boolean> completion) {
         ServerProfile snapshot = new ServerProfile(profile);
-        submit(project, "Undeploy failed", output, completion, () -> {
+        submitTarget(project, snapshot, deploymentName, "Undeploy failed", output, completion, () -> {
             boolean success = false;
             String name = safeDeploymentName(deploymentName);
             Path deployments = WildFlyPaths.deploymentsDir(snapshot);
@@ -239,7 +245,7 @@ public final class DeploymentScannerService {
                                         Consumer<String> output,
                                         Consumer<Boolean> completion) {
         ServerProfile snapshot = new ServerProfile(profile);
-        submit(project, "Redeploy failed", output, completion, () -> {
+        submitTarget(project, snapshot, deploymentName, "Redeploy failed", output, completion, () -> {
             boolean success = false;
             String name = safeDeploymentName(deploymentName);
             Path deployments = WildFlyPaths.deploymentsDir(snapshot);
@@ -265,11 +271,30 @@ public final class DeploymentScannerService {
     }
 
     static void replaceArtifactSafely(Path source, Path target) throws IOException {
+        replaceArtifactSafely(source, target, null);
+    }
+
+    static final class ArtifactChangedException extends IOException {
+        ArtifactChangedException() { super("Artifact changed during deployment preparation"); }
+    }
+
+    static void replaceArtifactSafely(Path source, Path target, ArtifactFingerprint expected) throws IOException {
         Path temp = Files.createTempFile(target.getParent(), ".wildfly-upload-", ".uploading");
         try {
             try (var input = Files.newInputStream(source);
                  var output = Files.newOutputStream(temp, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
-                input.transferTo(output);
+                byte[] buffer = new byte[64 * 1024];
+                int count;
+                while ((count = input.read(buffer)) != -1) {
+                    ProgressManager.checkCanceled();
+                    if (Thread.currentThread().isInterrupted()) throw new ProcessCanceledException();
+                    output.write(buffer, 0, count);
+                }
+            }
+            if (expected != null) {
+                try {
+                    if (!expected.sha256().equals(ArtifactFingerprint.read(temp).sha256())) throw new ArtifactChangedException();
+                } catch (java.util.zip.ZipException invalid) { throw new ArtifactChangedException(); }
             }
             try {
                 Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
@@ -323,9 +348,12 @@ public final class DeploymentScannerService {
 
     @FunctionalInterface interface ScannerOperation { boolean run() throws Exception; }
 
-    private static void submit(Project project, String operation, Consumer<String> output,
-                               Consumer<Boolean> completion, ScannerOperation action) {
-        ApplicationManager.getApplication().executeOnPooledThread(() -> complete(project, operation, output, completion, action));
+    private static void submitTarget(Project project, ServerProfile profile, String deploymentName, String operation,
+                                     Consumer<String> output, Consumer<Boolean> completion, ScannerOperation action) {
+        ApplicationManager.getApplication().executeOnPooledThread(() -> complete(project, operation, output, completion, () -> {
+            Path target = WildFlyPaths.deploymentsDir(profile).resolve(safeDeploymentName(deploymentName));
+            return DeploymentCoordinator.getInstance().withTarget(project, target, action::run);
+        }));
     }
 
     // Single completion boundary for success, failure, cancellation, and project shutdown.
@@ -334,6 +362,8 @@ public final class DeploymentScannerService {
         boolean success = false;
         try {
             if (!project.isDisposed()) success = action.run();
+        } catch (ArtifactChangedException changed) {
+            out(output, "Auto Redeploy is waiting for the newer artifact to finish writing.");
         } catch (Exception error) {
             PluginNotifications.failure(project, operation, error, output);
         } finally {
