@@ -72,7 +72,8 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             waitHttp(server, "/", null);
             assertFalse(processes.isDebugRunning(server));
             assertEquals(WildFlyProcessService.ServerState.MANAGED, background(() -> processes.state(server)));
-            assertEquals(1, (int) background(() -> WildFlyServerDetector.matchingProcesses(server).size()));
+            String detectionFailure = background(() -> WildFlyDetectionDiagnostics.awaitMatch(server));
+            assertNull(detectionFailure, detectionFailure);
             ProcessHandler reused = launch(server, false);
             // Wait until the reused session has bound, then Stop must leave the original owner alive.
             background(() -> { Thread.sleep(500); return null; });

@@ -101,6 +101,9 @@ jobs:
           name: marketplace-screenshots
           path: build/reports/screenshots/*.png
           if-no-files-found: error
+      - name: Validate the unsigned release candidate
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 scripts/release_manifest.py --candidate-directory build/distributions --commit "$GITHUB_SHA"
       - name: Exercise signing with a disposable CI certificate
         if: matrix.os == 'ubuntu-latest'
         shell: bash
@@ -111,7 +114,8 @@ jobs:
             -keyout "$RUNNER_TEMP/ci-signing.key" -out "$RUNNER_TEMP/ci-signing.crt"
           export PRIVATE_KEY_FILE="$RUNNER_TEMP/ci-signing.key"
           export CERTIFICATE_CHAIN_FILE="$RUNNER_TEMP/ci-signing.crt"
-          python3 scripts/ci_gradle.py signPlugin verifyPluginSignature --no-build-cache --no-configuration-cache
+          python3 scripts/ci_gradle.py signPlugin verifyPluginSignature -PreleaseArchive="$CANDIDATE_ARCHIVE" --no-build-cache --no-configuration-cache
+          python3 scripts/release_manifest.py --commit "$GITHUB_SHA"
           test -n "$(find build/release -name '*-signed.zip' -print -quit)"
           rm -- "$PRIVATE_KEY_FILE" "$CERTIFICATE_CHAIN_FILE"
 
