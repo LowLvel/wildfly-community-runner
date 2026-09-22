@@ -38,6 +38,9 @@ public class MarketplaceScreenshotsTest extends BasePlatformTestCase {
         var server = new ServerProfile(); server.name = "Development"; server.home = fixture.resolve("wildfly").toString();
         try {
             IconLoader.activate();
+            Path configuration = WildFlyPaths.configurationFile(server);
+            Files.createDirectories(configuration.getParent());
+            Files.writeString(configuration, "<server><deployment-scanner path='deployments' relative-to='jboss.server.base.dir'/></server>");
             Path deployments = WildFlyPaths.deploymentsDir(server); Files.createDirectories(deployments);
             Files.writeString(deployments.resolve("billing-api.war.deployed"), "sample scanner marker");
             Files.writeString(deployments.resolve("orders-api.war.deployed"), "sample scanner marker");

@@ -78,8 +78,7 @@ public final class ProjectSetupService implements Disposable {
         initialization = ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
                 ServerProfile candidate = findHome ? environmentProfile(System.getenv()) : null;
-                var shared = project.getBasePath() == null ? List.<ServiceProfile>of()
-                        : io.github.wildflycommunityrunner.settings.ProjectDeploymentFile.read(Path.of(project.getBasePath()));
+                var shared = readSharedServices();
                 var choices = discover ? BuildProjectDiscoveryService.discover(project) : List.<BuildProjectDiscoveryService.BuildProjectChoice>of();
                 IdeUi.later(project, () -> disposed, () -> {
                     if (!ProjectTrust.isTrusted(project)) return;
@@ -97,6 +96,16 @@ public final class ProjectSetupService implements Disposable {
                 PluginNotifications.failure(project, "WildFly setup failed", error, null);
             }
         });
+    }
+
+    private List<ServiceProfile> readSharedServices() {
+        try {
+            return project.getBasePath() == null ? List.of()
+                    : io.github.wildflycommunityrunner.settings.ProjectDeploymentFile.read(Path.of(project.getBasePath()));
+        } catch (Exception error) {
+            PluginNotifications.failure(project, "Shared WildFly settings were not loaded", error, null);
+            return List.of(); // Invalid shared definitions must not disable existing local services and watches.
+        }
     }
 
     /** Background filesystem validation, bounded to the two explicit environment values. */

@@ -87,7 +87,7 @@ public class ManagerPanelTest extends BasePlatformTestCase {
                 PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
             }
             assertEquals("○ Server stopped", status(table).getText());
-            assertTrue(status(table).getToolTipText().startsWith("Deployed: "));
+            assertTrue(status(table).getToolTipText().startsWith("Last successful deployment: "));
             Files.delete(marker);
             // Painting reads the last immutable snapshot, not the filesystem on EDT.
             assertEquals("○ Server stopped", status(table).getText());
