@@ -125,6 +125,7 @@ public final class DeploymentScannerService {
         Instant deadline = Instant.now().plus(Duration.ofSeconds(30));
         boolean sawUndeploying = false;
         while (Instant.now().isBefore(deadline) && !project.isDisposed()) {
+            ProgressManager.checkCanceled();
             if (Files.exists(undeployed)) {
                 out(output, "WildFly confirmed undeploy: " + deploymentName);
                 return;

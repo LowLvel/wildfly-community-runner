@@ -5,6 +5,7 @@ import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessOutputTypes;
 import com.intellij.openapi.util.Key;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import org.jetbrains.annotations.NotNull;
 import java.io.OutputStream;
@@ -105,6 +106,25 @@ public class SessionProcessHandlerTest extends BasePlatformTestCase {
         var session = new WildFlySessionProcessHandler(() -> { throw new IllegalArgumentException("Missing startup script"); }, Runnable::run);
         session.begin();
         assertEquals(Integer.valueOf(1), session.getExitCode());
+    }
+
+    public void testCancelledLaunchPropagatesCancellationAndFinishesSession() {
+        var session = new WildFlySessionProcessHandler(() -> { throw new ProcessCanceledException(); }, Runnable::run);
+        try {
+            session.begin();
+            fail("Cancellation must propagate to the executor");
+        } catch (ProcessCanceledException expected) {
+            assertEquals(Integer.valueOf(130), session.getExitCode());
+        }
+    }
+
+    public void testInterruptedLaunchPreservesInterruptAndFinishesSession() {
+        var session = new WildFlySessionProcessHandler(() -> { throw new InterruptedException(); }, Runnable::run);
+        try {
+            session.begin();
+            assertTrue(Thread.currentThread().isInterrupted());
+            assertEquals(Integer.valueOf(130), session.getExitCode());
+        } finally { Thread.interrupted(); }
     }
 
     public void testProjectSessionDisposalCancelsPendingLaunchAndDetachesActiveServer() {

@@ -1015,17 +1015,17 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         ServerProfile profile = requireServer();
         if (profile == null) return;
         background("WildFly debug failed", () -> {
-                WildFlyProcessService process = WildFlyProcessService.getInstance();
-                WildFlyProcessService.ServerState state = process.state(profile);
-                if (state == WildFlyProcessService.ServerState.MANAGED) {
-                    process.terminateAndWait(profile, activityOutput);
-                    process.start(profile, true, activityOutput);
-                } else if (state == WildFlyProcessService.ServerState.STOPPED) {
-                    process.start(profile, true, activityOutput);
-                } else if (state == WildFlyProcessService.ServerState.DETECTED) {
-                    append("WildFly is already running outside this managed process. Trying to attach to debug port " + profile.debugPort + " without restarting it.");
-                }
-                DebugAttachService.attachWhenAvailable(project, debuggerHost(profile), profile.debugPort, activityOutput);
+            WildFlyProcessService process = WildFlyProcessService.getInstance();
+            WildFlyProcessService.ServerState state = process.state(profile);
+            if (state == WildFlyProcessService.ServerState.MANAGED) {
+                process.terminateAndWait(profile, activityOutput);
+                process.start(profile, true, activityOutput);
+            } else if (state == WildFlyProcessService.ServerState.STOPPED) {
+                process.start(profile, true, activityOutput);
+            } else if (state == WildFlyProcessService.ServerState.DETECTED) {
+                append("WildFly is already running outside this managed process. Trying to attach to debug port " + profile.debugPort + " without restarting it.");
+            }
+            DebugAttachService.attachWhenAvailable(project, debuggerHost(profile), profile.debugPort, activityOutput);
         });
     }
 

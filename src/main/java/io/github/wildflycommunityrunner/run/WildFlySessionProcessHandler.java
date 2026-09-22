@@ -5,6 +5,7 @@ import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessOutputTypes;
 import com.intellij.openapi.util.Key;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import java.io.OutputStream;
@@ -50,6 +51,12 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
                     Integer exit = result.handler().getExitCode();
                     if (exit != null) finish(exit);
                 }
+            } catch (ProcessCanceledException cancelled) {
+                finish(130);
+                throw cancelled;
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                finish(130);
             } catch (Exception e) {
                 if (!isProcessTerminated()) {
                     notifyTextAvailable("Cannot start WildFly: " + e.getMessage() + "\n", ProcessOutputTypes.STDERR);

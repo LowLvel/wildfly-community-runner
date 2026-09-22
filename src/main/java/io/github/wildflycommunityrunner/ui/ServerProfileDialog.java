@@ -96,29 +96,29 @@ public final class ServerProfileDialog extends DialogWrapper {
         String home = homeField.getText();
         int generation = ++configurationGeneration;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
-        java.util.List<String> names = new java.util.ArrayList<>();
-        try {
-            Path dir = Path.of(home).resolve("standalone").resolve("configuration");
-            if (Files.isDirectory(dir)) {
-                try (Stream<Path> files = Files.list(dir)) {
-                    files.filter(Files::isRegularFile)
-                            .map(p -> p.getFileName().toString())
-                            .filter(n -> n.endsWith(".xml"))
-                            .sorted()
-                            .forEach(names::add);
+            java.util.List<String> names = new java.util.ArrayList<>();
+            try {
+                Path dir = Path.of(home).resolve("standalone").resolve("configuration");
+                if (Files.isDirectory(dir)) {
+                    try (Stream<Path> files = Files.list(dir)) {
+                        files.filter(Files::isRegularFile)
+                                .map(p -> p.getFileName().toString())
+                                .filter(n -> n.endsWith(".xml"))
+                                .sorted()
+                                .forEach(names::add);
+                    }
                 }
-            }
-        } catch (Exception ignored) {}
-        // Only Swing controls are updated here, including when the dialog has just opened.
-        SwingUtilities.invokeLater(() -> {
-            if (isDisposed() || project.isDisposed()) return;
-            if (generation != configurationGeneration || !home.equals(homeField.getText())) return;
-            // Keep a configuration typed while the directory was being listed.
-            Object selected = configCombo.getEditor().getItem();
-            String keep = selected == null || selected.toString().isBlank() ? wanted : selected.toString();
-            configCombo.setModel(new DefaultComboBoxModel<>(names.toArray(String[]::new)));
-            configCombo.setSelectedItem(keep == null || keep.isBlank() ? "standalone.xml" : keep);
-        });
+            } catch (Exception ignored) {}
+            // Only Swing controls are updated here, including when the dialog has just opened.
+            SwingUtilities.invokeLater(() -> {
+                if (isDisposed() || project.isDisposed()) return;
+                if (generation != configurationGeneration || !home.equals(homeField.getText())) return;
+                // Keep a configuration typed while the directory was being listed.
+                Object selected = configCombo.getEditor().getItem();
+                String keep = selected == null || selected.toString().isBlank() ? wanted : selected.toString();
+                configCombo.setModel(new DefaultComboBoxModel<>(names.toArray(String[]::new)));
+                configCombo.setSelectedItem(keep == null || keep.isBlank() ? "standalone.xml" : keep);
+            });
         });
     }
 
@@ -201,6 +201,7 @@ public final class ServerProfileDialog extends DialogWrapper {
 
     private String validationFields() {
         return nameField.getText() + "\n" + homeField.getText() + "\n" + configCombo.getEditor().getItem()
-                + "\n" + javaHomeField.getText() + "\n" + hostField.getText() + "\n" + httpPort.getValue() + "\n" + debugPort.getValue();
+                + "\n" + javaHomeField.getText() + "\n" + hostField.getText() + "\n" + httpPort.getValue() + "\n" + debugPort.getValue()
+                + "\n" + startupArgumentsField.getText() + "\n" + jvmOptionsField.getText();
     }
 }
