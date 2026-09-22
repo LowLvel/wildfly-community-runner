@@ -16,6 +16,7 @@
     <depends>org.jetbrains.idea.maven</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <notificationGroup id="WildFly Community Runner" displayType="BALLOON" isLogByDefault="true"/>
         <configurationType implementation="io.github.wildflycommunityrunner.run.WildFlyConfigurationType"/>
         <toolWindow id="WildFly"
                     anchor="right"

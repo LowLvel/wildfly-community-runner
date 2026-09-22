@@ -8,6 +8,8 @@ import com.intellij.execution.process.ProcessListener;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.progress.ProcessCanceledException;
+import io.github.wildflycommunityrunner.util.IdeUi;
 import com.intellij.openapi.util.Key;
 import com.intellij.util.execution.ParametersListUtil;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
@@ -30,9 +32,11 @@ public final class GradleBuildService {
                              Consumer<String> output) {
         // Save from an IntelliJ-dispatched EDT callback so document/model writes have the
         // required write-intent context, then do the expensive Gradle process work in BGT.
-        ApplicationManager.getApplication().invokeLater(() -> {
+        IdeUi.later(project, () -> {
             try {
                 FileDocumentManager.getInstance().saveAllDocuments();
+            } catch (ProcessCanceledException cancelled) {
+                throw cancelled;
             } catch (Exception e) {
                 output.accept("ERROR saving documents before Gradle build: " + e.getMessage());
                 if (onFailure != null) onFailure.run();
@@ -103,6 +107,8 @@ public final class GradleBuildService {
                 }
             });
             handler.startNotify();
+        } catch (ProcessCanceledException cancelled) {
+            throw cancelled;
         } catch (Exception e) {
             output.accept("ERROR: " + e.getMessage());
             if (onFailure != null) onFailure.run();

@@ -7,6 +7,8 @@ import com.intellij.execution.runners.ProgramRunner;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.progress.ProcessCanceledException;
+import io.github.wildflycommunityrunner.util.IdeUi;
 import com.intellij.util.execution.ParametersListUtil;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
 import org.jetbrains.annotations.NotNull;
@@ -49,7 +51,7 @@ public final class MavenBuildService {
             // IntelliJ 2025.1 no longer gives raw Swing callbacks an implicit write-intent
             // lock. Saving documents and creating/running the Maven configuration can touch
             // platform model state, so both operations must begin from Application.invokeLater().
-            ApplicationManager.getApplication().invokeLater(() -> {
+            IdeUi.later(project, () -> {
                 try {
                     FileDocumentManager.getInstance().saveAllDocuments();
                     MavenRunner runner = MavenRunner.getInstance(project);
@@ -80,11 +82,15 @@ public final class MavenBuildService {
                     };
 
                     MavenRunConfigurationType.runConfiguration(project, parameters, null, settings, callback, false);
+                } catch (ProcessCanceledException cancelled) {
+                    throw cancelled;
                 } catch (Exception e) {
                     output.accept("ERROR launching Maven: " + e.getMessage());
                     if (onFailure != null) onFailure.run();
                 }
             });
+        } catch (ProcessCanceledException cancelled) {
+            throw cancelled;
         } catch (Exception e) {
             output.accept("ERROR: " + e.getMessage());
             if (onFailure != null) onFailure.run();

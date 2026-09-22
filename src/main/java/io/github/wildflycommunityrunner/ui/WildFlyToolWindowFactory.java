@@ -13,6 +13,7 @@ public final class WildFlyToolWindowFactory implements ToolWindowFactory, DumbAw
     public void createToolWindowContent(@NotNull Project project, @NotNull ToolWindow toolWindow) {
         WildFlyManagerPanel panel = new WildFlyManagerPanel(project);
         Content content = ContentFactory.getInstance().createContent(panel, "", false);
+        content.setDisposer(panel);
         toolWindow.getContentManager().addContent(content);
     }
 }

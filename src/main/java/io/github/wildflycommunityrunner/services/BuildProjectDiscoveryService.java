@@ -4,6 +4,8 @@ import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.module.Module;
 import com.intellij.openapi.module.ModuleManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.progress.ProcessCanceledException;
+import com.intellij.openapi.progress.ProgressManager;
 import com.intellij.openapi.roots.ModuleRootManager;
 import com.intellij.openapi.vfs.VirtualFile;
 import io.github.wildflycommunityrunner.model.BuildSystem;
@@ -52,7 +54,8 @@ public final class BuildProjectDiscoveryService {
     public static List<BuildProjectChoice> discoverImportedOnly(Project project) {
         Map<String, BuildProjectChoice> byPath = new LinkedHashMap<>();
         Path projectBase = projectBase(project);
-        ReadAction.compute(() -> discoverImported(project, projectBase, byPath));
+        List<Path> roots = ReadAction.compute(() -> discoverImported(project, projectBase, byPath));
+        for (Path root : roots) addDirectBuildFiles(root, projectBase, byPath);
         return sorted(byPath);
     }
 
@@ -62,6 +65,7 @@ public final class BuildProjectDiscoveryService {
 
         // Project-model access must be protected by a read action on IDEA 2025.1+.
         List<Path> roots = ReadAction.compute(() -> discoverImported(project, projectBase, byPath));
+        for (Path root : roots) addDirectBuildFiles(root, projectBase, byPath);
 
         // Also scan the project tree so nested projects that have not yet been imported by
         // IntelliJ are still discoverable. Keep it bounded and skip output/vendor folders.
@@ -91,6 +95,7 @@ public final class BuildProjectDiscoveryService {
                                                Path projectBase,
                                                Map<String, BuildProjectChoice> out) {
         List<Path> roots = new ArrayList<>();
+        if (project.isDisposed()) return roots;
 
         MavenProjectsManager manager = MavenProjectsManager.getInstance(project);
         for (MavenProject mp : manager.getProjects()) {
@@ -112,7 +117,6 @@ public final class BuildProjectDiscoveryService {
                 try {
                     Path moduleRoot = Path.of(root.getPath());
                     roots.add(moduleRoot);
-                    addDirectBuildFiles(moduleRoot, projectBase, out);
                 } catch (Exception ignored) {
                     // A malformed/non-local VFS root should not make discovery fail.
                 }
@@ -130,6 +134,7 @@ public final class BuildProjectDiscoveryService {
             Files.walkFileTree(root, Set.of(), MAX_SCAN_DEPTH, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    ProgressManager.checkCanceled();
                     if (!dir.equals(root)) {
                         Path fileName = dir.getFileName();
                         String name = fileName == null ? "" : fileName.toString().toLowerCase(Locale.ROOT);
@@ -149,6 +154,8 @@ public final class BuildProjectDiscoveryService {
                     return FileVisitResult.CONTINUE;
                 }
             });
+        } catch (ProcessCanceledException cancelled) {
+            throw cancelled;
         } catch (Exception ignored) {
             // Discovery is best-effort. Imported projects remain available even if part of the
             // filesystem tree is unreadable (common on corporate workspaces).

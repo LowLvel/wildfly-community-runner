@@ -6,6 +6,7 @@ import com.intellij.openapi.ui.ValidationInfo;
 import io.github.wildflycommunityrunner.model.BuildSystem;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
 import io.github.wildflycommunityrunner.services.BuildProjectDiscoveryService.BuildProjectChoice;
+import io.github.wildflycommunityrunner.services.DeploymentScannerService;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -228,6 +229,10 @@ public final class ServiceProfileDialog extends DialogWrapper {
     protected @Nullable ValidationInfo doValidate() {
         readFieldsIntoProfile();
         if (working.name == null || working.name.isBlank()) return new ValidationInfo("Service name is required.");
+        if (!working.deploymentName.isBlank()) {
+            try { DeploymentScannerService.safeDeploymentName(working.deploymentName); }
+            catch (IllegalArgumentException error) { return new ValidationInfo(error.getMessage(), deploymentName); }
+        }
         if (working.buildFilePath == null || working.buildFilePath.isBlank()) return new ValidationInfo("Select a Maven or Gradle build file.");
         String lower = working.buildFilePath.toLowerCase(Locale.ROOT);
         if (working.buildSystemEnum() == BuildSystem.MAVEN && !lower.endsWith("pom.xml")) return new ValidationInfo("Maven services must point to pom.xml.");

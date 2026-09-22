@@ -1,6 +1,8 @@
 package io.github.wildflycommunityrunner.ui;
 
 import com.intellij.icons.AllIcons;
+import com.intellij.openapi.Disposable;
+import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.ide.BrowserUtil;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnActionEvent;
@@ -25,6 +27,8 @@ import io.github.wildflycommunityrunner.services.WildFlyProcessService;
 import io.github.wildflycommunityrunner.settings.WildFlyApplicationSettings;
 import io.github.wildflycommunityrunner.settings.WildFlyProjectSettings;
 import io.github.wildflycommunityrunner.util.ArtifactLocator;
+import io.github.wildflycommunityrunner.util.IdeUi;
+import io.github.wildflycommunityrunner.services.PluginNotifications;
 import io.github.wildflycommunityrunner.util.ServicePresentation;
 import io.github.wildflycommunityrunner.util.WildFlyPaths;
 
@@ -39,7 +43,10 @@ import java.awt.*;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.io.File;
+import java.lang.ref.WeakReference;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.function.Consumer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -56,7 +63,7 @@ import java.util.Set;
 import java.util.UUID;
 
 @SuppressWarnings("serial")
-public final class WildFlyManagerPanel extends JPanel {
+public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
     private static final DateTimeFormatter DEPLOY_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -82,6 +89,15 @@ public final class WildFlyManagerPanel extends JPanel {
     private List<BuildProjectChoice> buildChoices = List.of();
     private List<ExternalDeployment> externalDeployments = List.of();
     private boolean loading;
+    private volatile boolean disposed;
+    private final Consumer<String> activityOutput;
+    private final StringBuilder pendingOutput = new StringBuilder();
+    private boolean outputScheduled;
+    private static final int MAX_ACTIVITY_CHARS = 200_000;
+    private final Object watcherConfigurationLock = new Object();
+    private volatile int watcherConfigurationGeneration;
+    private Map<String, DeploymentStatusView> deploymentStatuses = Map.of();
+    private String statusServerId = "";
     private boolean refreshingTable;
     private boolean changingSelection;
     private volatile boolean serverStateRefreshRunning;
@@ -90,16 +106,19 @@ public final class WildFlyManagerPanel extends JPanel {
     public WildFlyManagerPanel(Project project) {
         super(new BorderLayout());
         this.project = project;
+        WeakReference<WildFlyManagerPanel> weakPanel = new WeakReference<>(this);
+        activityOutput = message -> {
+            WildFlyManagerPanel panel = weakPanel.get();
+            if (panel != null) panel.append(message);
+        };
         setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         buildUi();
         loadSettings();
         refreshTimer = new Timer(2000, e -> {
-            if (project.isDisposed()) {
+            if (disposed || project.isDisposed()) {
                 ((Timer) e.getSource()).stop();
             } else {
-                serviceTable.repaint();
-                refreshExternalDeployments();
-                refreshServerState();
+                onUi(() -> { refreshExternalDeployments(); refreshServerState(); });
             }
         });
         refreshTimer.start();
@@ -108,7 +127,7 @@ public final class WildFlyManagerPanel extends JPanel {
     @Override
     public void addNotify() {
         super.addNotify();
-        if (!project.isDisposed() && !refreshTimer.isRunning()) refreshTimer.start();
+        if (!disposed && !project.isDisposed() && !refreshTimer.isRunning()) refreshTimer.start();
     }
 
     @Override
@@ -131,8 +150,8 @@ public final class WildFlyManagerPanel extends JPanel {
         JPanel logActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0));
         JButton openServerLog = new JButton("server.log");
         JButton clear = new JButton("Clear");
-        openServerLog.addActionListener(e -> openLog());
-        clear.addActionListener(e -> output.setText(""));
+        openServerLog.addActionListener(e -> onUi(() -> openLog()));
+        clear.addActionListener(e -> onUi(() -> output.setText("")));
         logActions.add(openServerLog);
         logActions.add(clear);
         logToolbar.add(logTitle, BorderLayout.WEST);
@@ -190,23 +209,28 @@ public final class WildFlyManagerPanel extends JPanel {
         panel.add(row, BorderLayout.CENTER);
 
         serverCombo.addActionListener(e -> {
-            saveSelectedServer();
-            syncAutoDeployWatcher();
-            serviceTable.repaint();
-            refreshExternalDeployments();
-            refreshServerState();
+            if (loading) return;
+            onUi(() -> {
+                deploymentStatuses = Map.of();
+                statusServerId = "";
+                saveSelectedServer();
+                syncAutoDeployWatcher();
+                serviceTable.repaint();
+                refreshExternalDeployments();
+                refreshServerState();
+            });
         });
-        start.addActionListener(e -> startServer(false));
-        debug.addActionListener(e -> startDebug());
-        stop.addActionListener(e -> stopServer());
-        attach.addActionListener(e -> attachDebugger());
-        add.addActionListener(e -> addServer());
-        edit.addActionListener(e -> editServer());
-        remove.addActionListener(e -> removeServer());
-        config.addActionListener(e -> editStandaloneConfig());
-        home.addActionListener(e -> openWildFlyHome());
-        deployments.addActionListener(e -> openDeploymentsFolder());
-        log.addActionListener(e -> openLog());
+        start.addActionListener(e -> onUi(() -> startServer(false)));
+        debug.addActionListener(e -> onUi(() -> startDebug()));
+        stop.addActionListener(e -> onUi(() -> stopServer()));
+        attach.addActionListener(e -> onUi(() -> attachDebugger()));
+        add.addActionListener(e -> onUi(() -> addServer()));
+        edit.addActionListener(e -> onUi(() -> editServer()));
+        remove.addActionListener(e -> onUi(() -> removeServer()));
+        config.addActionListener(e -> onUi(() -> editStandaloneConfig()));
+        home.addActionListener(e -> onUi(() -> openWildFlyHome()));
+        deployments.addActionListener(e -> onUi(() -> openDeploymentsFolder()));
+        log.addActionListener(e -> onUi(() -> openLog()));
         return panel;
     }
 
@@ -215,15 +239,15 @@ public final class WildFlyManagerPanel extends JPanel {
         configureExternalTable();
 
         JComponent projectTablePanel = ToolbarDecorator.createDecorator(serviceTable)
-                .setAddAction(button -> addCustomService())
+                .setAddAction(button -> onUi(this::addCustomService))
                 .setAddActionName("Add Service")
-                .setEditAction(button -> openSelectedServiceDetails())
+                .setEditAction(button -> onUi(this::openSelectedServiceDetails))
                 .setEditActionName("Edit Service")
-                .setRemoveAction(button -> removeSelectedService())
+                .setRemoveAction(button -> onUi(this::removeSelectedService))
                 .setRemoveActionName("Remove Service")
                 .disableUpDownActions()
                 .addExtraAction(new DumbAwareAction("Discover Projects", "Find Maven and Gradle projects recursively", AllIcons.Actions.Refresh) {
-                    @Override public void actionPerformed(AnActionEvent e) { discoverBuildProjects(); }
+                    @Override public void actionPerformed(AnActionEvent e) { onUi(WildFlyManagerPanel.this::discoverBuildProjects); }
                     @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
                 })
                 .createPanel();
@@ -278,7 +302,7 @@ public final class WildFlyManagerPanel extends JPanel {
                 int row = serviceTable.rowAtPoint(e.getPoint());
                 if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2 && row >= 0) {
                     if (!serviceTable.isRowSelected(row)) serviceTable.setRowSelectionInterval(row, row);
-                    openSelectedServiceDetails();
+                    onUi(WildFlyManagerPanel.this::openSelectedServiceDetails);
                 }
             }
         });
@@ -290,7 +314,7 @@ public final class WildFlyManagerPanel extends JPanel {
         serviceTable.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
                 .put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "edit-service");
         serviceTable.getActionMap().put("edit-service", new AbstractAction() {
-            @Override public void actionPerformed(java.awt.event.ActionEvent e) { openSelectedServiceDetails(); }
+            @Override public void actionPerformed(java.awt.event.ActionEvent e) { onUi(WildFlyManagerPanel.this::openSelectedServiceDetails); }
         });
     }
 
@@ -314,7 +338,7 @@ public final class WildFlyManagerPanel extends JPanel {
                 int row = externalTable.rowAtPoint(e.getPoint());
                 if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2 && row >= 0) {
                     if (!externalTable.isRowSelected(row)) externalTable.setRowSelectionInterval(row, row);
-                    openSelectedInBrowser();
+                    onUi(WildFlyManagerPanel.this::openSelectedInBrowser);
                 }
             }
         });
@@ -375,20 +399,20 @@ public final class WildFlyManagerPanel extends JPanel {
         JPanel actions = compactToolbar(build, redeploy, browser, more);
         bar.add(actions, BorderLayout.EAST);
 
-        build.addActionListener(e -> buildSelected(BuildDeployMode.AUTO));
-        redeploy.addActionListener(e -> redeploySelected());
-        browser.addActionListener(e -> openSelectedInBrowser());
-        buildDeploy.addActionListener(e -> buildSelected(BuildDeployMode.FORCE_DEPLOY));
-        buildOnly.addActionListener(e -> buildSelected(BuildDeployMode.BUILD_ONLY));
-        undeploy.addActionListener(e -> undeploySelected());
-        autoOn.addActionListener(e -> setSelectedAutoDeploy(true));
-        autoOff.addActionListener(e -> setSelectedAutoDeploy(false));
-        edit.addActionListener(e -> openSelectedServiceDetails());
-        associate.addActionListener(e -> associateExternalSource());
-        addToProject.addActionListener(e -> addExternalToProject());
-        openModule.addActionListener(e -> openSelectedModuleFolder());
-        openArtifact.addActionListener(e -> openSelectedArtifactFolder());
-        remove.addActionListener(e -> removeSelectedService());
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.AUTO)));
+        redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
+        browser.addActionListener(e -> onUi(() -> openSelectedInBrowser()));
+        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.FORCE_DEPLOY)));
+        buildOnly.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.BUILD_ONLY)));
+        undeploy.addActionListener(e -> onUi(() -> undeploySelected()));
+        autoOn.addActionListener(e -> onUi(() -> setSelectedAutoDeploy(true)));
+        autoOff.addActionListener(e -> onUi(() -> setSelectedAutoDeploy(false)));
+        edit.addActionListener(e -> onUi(() -> openSelectedServiceDetails()));
+        associate.addActionListener(e -> onUi(() -> associateExternalSource()));
+        addToProject.addActionListener(e -> onUi(() -> addExternalToProject()));
+        openModule.addActionListener(e -> onUi(() -> openSelectedModuleFolder()));
+        openArtifact.addActionListener(e -> onUi(() -> openSelectedArtifactFolder()));
+        remove.addActionListener(e -> onUi(() -> removeSelectedService()));
         return bar;
     }
 
@@ -455,18 +479,18 @@ public final class WildFlyManagerPanel extends JPanel {
         menu.add(build); menu.add(buildDeploy); menu.add(buildOnly); menu.add(redeploy); menu.add(undeploy); menu.add(browser);
         menu.addSeparator(); menu.add(autoOn); menu.add(autoOff); menu.add(edit);
         menu.addSeparator(); menu.add(module); menu.add(artifact); menu.add(remove);
-        build.addActionListener(e -> buildSelected(BuildDeployMode.AUTO));
-        buildDeploy.addActionListener(e -> buildSelected(BuildDeployMode.FORCE_DEPLOY));
-        buildOnly.addActionListener(e -> buildSelected(BuildDeployMode.BUILD_ONLY));
-        redeploy.addActionListener(e -> redeploySelected());
-        undeploy.addActionListener(e -> undeploySelected());
-        browser.addActionListener(e -> openSelectedInBrowser());
-        autoOn.addActionListener(e -> setSelectedAutoDeploy(true));
-        autoOff.addActionListener(e -> setSelectedAutoDeploy(false));
-        edit.addActionListener(e -> openSelectedServiceDetails());
-        module.addActionListener(e -> openSelectedModuleFolder());
-        artifact.addActionListener(e -> openSelectedArtifactFolder());
-        remove.addActionListener(e -> removeSelectedService());
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.AUTO)));
+        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.FORCE_DEPLOY)));
+        buildOnly.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.BUILD_ONLY)));
+        redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
+        undeploy.addActionListener(e -> onUi(() -> undeploySelected()));
+        browser.addActionListener(e -> onUi(() -> openSelectedInBrowser()));
+        autoOn.addActionListener(e -> onUi(() -> setSelectedAutoDeploy(true)));
+        autoOff.addActionListener(e -> onUi(() -> setSelectedAutoDeploy(false)));
+        edit.addActionListener(e -> onUi(() -> openSelectedServiceDetails()));
+        module.addActionListener(e -> onUi(() -> openSelectedModuleFolder()));
+        artifact.addActionListener(e -> onUi(() -> openSelectedArtifactFolder()));
+        remove.addActionListener(e -> onUi(() -> removeSelectedService()));
         edit.setEnabled(selectedServices().size() == 1);
         browser.setEnabled(selectedServices().size() == 1);
         module.setEnabled(selectedServices().size() == 1);
@@ -498,15 +522,15 @@ public final class WildFlyManagerPanel extends JPanel {
         addToProject.setEnabled(single && selected.get(0).source() != null);
         module.setEnabled(single && selected.get(0).source() != null);
         artifact.setEnabled(single && selected.get(0).source() != null);
-        build.addActionListener(e -> buildSelected(BuildDeployMode.AUTO));
-        buildDeploy.addActionListener(e -> buildSelected(BuildDeployMode.FORCE_DEPLOY));
-        redeploy.addActionListener(e -> redeploySelected());
-        undeploy.addActionListener(e -> undeploySelected());
-        browser.addActionListener(e -> openSelectedInBrowser());
-        associate.addActionListener(e -> associateExternalSource());
-        addToProject.addActionListener(e -> addExternalToProject());
-        module.addActionListener(e -> openSelectedModuleFolder());
-        artifact.addActionListener(e -> openSelectedArtifactFolder());
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.AUTO)));
+        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.FORCE_DEPLOY)));
+        redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
+        undeploy.addActionListener(e -> onUi(() -> undeploySelected()));
+        browser.addActionListener(e -> onUi(() -> openSelectedInBrowser()));
+        associate.addActionListener(e -> onUi(() -> associateExternalSource()));
+        addToProject.addActionListener(e -> onUi(() -> addExternalToProject()));
+        module.addActionListener(e -> onUi(() -> openSelectedModuleFolder()));
+        artifact.addActionListener(e -> onUi(() -> openSelectedArtifactFolder()));
         return menu;
     }
 
@@ -582,7 +606,7 @@ public final class WildFlyManagerPanel extends JPanel {
             }
             if (detected == null) return;
             String id = detected.id;
-            ApplicationManager.getApplication().invokeLater(() -> {
+            onUi(() -> {
                 ServerProfile current = selectedServer();
                 if (current != null && process.isRunning(current)) return;
                 if (selectServerById(id)) { saveSelectedServer(); refreshServerState(); refreshExternalDeployments(); }
@@ -591,14 +615,18 @@ public final class WildFlyManagerPanel extends JPanel {
     }
 
     private void refreshBuildChoices(boolean recursive) {
-        buildChoices = recursive ? BuildProjectDiscoveryService.discover(project) : BuildProjectDiscoveryService.discoverImportedOnly(project);
+        background("Project discovery failed", () -> {
+            List<BuildProjectChoice> choices = recursive ? BuildProjectDiscoveryService.discover(project)
+                    : BuildProjectDiscoveryService.discoverImportedOnly(project);
+            onUi(() -> buildChoices = choices);
+        });
     }
 
     private void discoverBuildProjects() {
         append("Scanning workspace for Maven/Gradle projects…");
-        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+        background("Project discovery failed", () -> {
             List<BuildProjectChoice> discovered = BuildProjectDiscoveryService.discover(project);
-            ApplicationManager.getApplication().invokeLater(() -> {
+            onUi(() -> {
                 buildChoices = discovered;
                 WildFlyProjectSettings.StateData state = projectState();
                 int added = 0;
@@ -714,8 +742,11 @@ public final class WildFlyManagerPanel extends JPanel {
     }
 
     private void refreshExternalDeployments() {
+        if (disposed || project.isDisposed()) return;
         ServerProfile selected = selectedServer();
         if (selected == null) {
+            deploymentStatuses = Map.of();
+            statusServerId = "";
             externalDeployments = List.of();
             externalTableModel.fireTableDataChanged();
             externalSection.setVisible(false);
@@ -725,46 +756,61 @@ public final class WildFlyManagerPanel extends JPanel {
         externalRefreshRunning = true;
         ServerProfile server = new ServerProfile(selected);
         Set<String> localNames = new LinkedHashSet<>();
-        for (ServiceProfile service : projectState().services) localNames.add(deploymentNameForStatus(service).toLowerCase(Locale.ROOT));
+        for (ServiceProfile service : projectState().services) localNames.add(deploymentNameForStatus(service));
+        Set<String> lowerLocalNames = new LinkedHashSet<>();
+        localNames.forEach(name -> lowerLocalNames.add(name.toLowerCase(Locale.ROOT)));
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            WildFlyApplicationSettings app = WildFlyApplicationSettings.getInstance();
-            List<ExternalDeployment> rows = new ArrayList<>();
-            for (String name : DeploymentScannerService.listDeployments(server)) {
-                String status = DeploymentScannerService.status(server, name);
-                if ("NOT DEPLOYED".equals(status)) continue;
-                if (localNames.contains(name.toLowerCase(Locale.ROOT))) continue;
-                rows.add(new ExternalDeployment(name, app.findKnownServiceByDeploymentName(name)));
-            }
-            rows.sort(Comparator.comparing(ExternalDeployment::deploymentName, String.CASE_INSENSITIVE_ORDER));
-            ApplicationManager.getApplication().invokeLater(() -> {
-                try {
+            try {
+                if (disposed || project.isDisposed()) return;
+                WildFlyApplicationSettings app = WildFlyApplicationSettings.getInstance();
+                List<ExternalDeployment> rows = new ArrayList<>();
+                Map<String, DeploymentStatusView> statuses = new HashMap<>();
+                Set<String> allNames = new LinkedHashSet<>(localNames);
+                allNames.addAll(DeploymentScannerService.listDeployments(server));
+                for (String name : allNames) {
+                    String status = DeploymentScannerService.status(server, name);
+                    statuses.put(name, new DeploymentStatusView(status, DeploymentScannerService.lastDeployedAt(server, name)));
+                    if (!"NOT DEPLOYED".equals(status) && !lowerLocalNames.contains(name.toLowerCase(Locale.ROOT))) {
+                        rows.add(new ExternalDeployment(name, app.findKnownServiceByDeploymentName(name)));
+                    }
+                }
+                rows.sort(Comparator.comparing(ExternalDeployment::deploymentName, String.CASE_INSENSITIVE_ORDER));
+                onUi(() -> {
                     ServerProfile current = selectedServer();
-                    if (current == null || !Objects.equals(current.id, server.id)) return;
+                    if (current == null || !sameServerLocation(current, server)) return;
                     Set<String> selectedNames = new LinkedHashSet<>();
                     for (ExternalDeployment row : selectedExternalDeployments()) selectedNames.add(row.deploymentName());
+                    deploymentStatuses = Map.copyOf(statuses);
+                    statusServerId = server.id;
                     externalDeployments = List.copyOf(rows);
-                    externalTableModel.fireTableDataChanged();
-                    externalSection.setVisible(!externalDeployments.isEmpty());
-                    if (!selectedNames.isEmpty()) {
-                        changingSelection = true;
-                        try {
-                            externalTable.clearSelection();
-                            for (int i = 0; i < externalDeployments.size(); i++) {
-                                if (selectedNames.contains(externalDeployments.get(i).deploymentName())) {
-                                    int view = externalTable.convertRowIndexToView(i);
-                                    if (view >= 0) externalTable.addRowSelectionInterval(view, view);
-                                }
+                    changingSelection = true;
+                    try {
+                        externalTableModel.fireTableDataChanged();
+                        externalTable.clearSelection();
+                        for (int i = 0; i < externalDeployments.size(); i++) {
+                            if (selectedNames.contains(externalDeployments.get(i).deploymentName())) {
+                                int view = externalTable.convertRowIndexToView(i);
+                                if (view >= 0) externalTable.addRowSelectionInterval(view, view);
                             }
-                        } finally { changingSelection = false; }
-                    }
+                        }
+                    } finally { changingSelection = false; }
+                    externalSection.setVisible(!externalDeployments.isEmpty());
                     refreshSelectionLabel();
                     revalidate();
                     repaint();
-                } finally {
-                    externalRefreshRunning = false;
-                }
-            });
+                });
+            } catch (ProcessCanceledException cancelled) {
+                throw cancelled;
+            } catch (Exception error) {
+                append("Deployment status refresh failed: " + PluginNotifications.message(error));
+            } finally { externalRefreshRunning = false; }
         });
+    }
+
+    private static boolean sameServerLocation(ServerProfile a, ServerProfile b) {
+        return Objects.equals(a.id, b.id) && Objects.equals(a.home, b.home)
+                && Objects.equals(a.configuration, b.configuration) && Objects.equals(a.host, b.host)
+                && a.httpPort == b.httpPort && a.debugPort == b.debugPort;
     }
 
     private void buildSelected(BuildDeployMode mode) {
@@ -779,7 +825,8 @@ public final class WildFlyManagerPanel extends JPanel {
             services = selectedServices().stream().map(ServiceProfile::new).toList();
         }
         if (services.isEmpty()) { append("Select one or more services first."); return; }
-        ServerProfile server = mode == BuildDeployMode.FORCE_DEPLOY ? requireServer() : selectedServer();
+        ServerProfile server = mode == BuildDeployMode.FORCE_DEPLOY ? requireServer()
+                : selectedServer() == null ? null : new ServerProfile(selectedServer());
         if (mode == BuildDeployMode.FORCE_DEPLOY && server == null) return;
         append("Building " + services.size() + " service(s) sequentially.");
         buildAt(services, server, 0, mode, externalSelection);
@@ -792,7 +839,7 @@ public final class WildFlyManagerPanel extends JPanel {
         ArtifactAutoDeployService watcher = ArtifactAutoDeployService.getInstance(project);
         if (mode != BuildDeployMode.AUTO) watcher.suppress(service);
         BuildService.build(project, service,
-                () -> {
+                () -> onUi(() -> {
                     if (mode != BuildDeployMode.AUTO) watcher.releaseSuppression(service);
                     if (mode == BuildDeployMode.FORCE_DEPLOY && server != null) {
                         deployService(service, server, () -> buildAt(services, server, index + 1, mode, externalSelection));
@@ -802,12 +849,12 @@ public final class WildFlyManagerPanel extends JPanel {
                     } else {
                         buildAt(services, server, index + 1, mode, externalSelection);
                     }
-                },
-                () -> {
+                }),
+                () -> onUi(() -> {
                     if (mode != BuildDeployMode.AUTO) watcher.releaseSuppression(service);
-                    append("Build operation stopped after failure in " + service.name);
-                },
-                this::append);
+                    PluginNotifications.failure(project, "Build failed", "Build operation stopped at " + service.name + ". See the build console for details.", activityOutput);
+                }),
+                activityOutput);
     }
 
     private void redeploySelected() {
@@ -835,28 +882,25 @@ public final class WildFlyManagerPanel extends JPanel {
         if (external.source() != null) {
             deployService(new ServiceProfile(external.source()), server, () -> redeployExternalAt(deployments, server, index + 1));
         } else {
-            DeploymentScannerService.redeployExisting(project, server, external.deploymentName(), this::append,
-                    ok -> redeployExternalAt(deployments, server, index + 1));
+            DeploymentScannerService.redeployExisting(project, server, external.deploymentName(), activityOutput,
+                    ok -> onUi(() -> { refreshExternalDeployments(); if (ok) redeployExternalAt(deployments, server, index + 1); }));
         }
     }
 
     private void deployService(ServiceProfile service, ServerProfile server, Runnable completion) {
-        try {
-            Path artifact = ArtifactLocator.resolve(project, service);
-            String name = ArtifactLocator.effectiveDeploymentName(service, artifact);
-            service.deploymentName = name;
-            rememberService(service);
-            append("Deploying " + service.name + " as " + name);
-            DeploymentScannerService.deploy(project, server, artifact, name, this::append, ok -> {
-                ApplicationManager.getApplication().invokeLater(() -> {
-                    serviceTable.repaint();
-                    refreshExternalDeployments();
-                });
+        ServerProfile serverSnapshot = new ServerProfile(server);
+        ServiceProfile source = new ServiceProfile(service);
+        background("Deployment failed", () -> {
+            Path artifact = ArtifactLocator.resolve(project, source);
+            String name = ArtifactLocator.effectiveDeploymentName(source, artifact);
+            source.deploymentName = name;
+            rememberService(source);
+            append("Deploying " + source.name + " as " + name);
+            DeploymentScannerService.deploy(project, serverSnapshot, artifact, name, activityOutput, ok -> onUi(() -> {
+                refreshExternalDeployments();
                 if (ok && completion != null) completion.run();
-            });
-        } catch (Exception e) {
-            append("ERROR: " + e.getMessage());
-        }
+            }));
+        });
     }
 
     private void undeploySelected() {
@@ -873,9 +917,9 @@ public final class WildFlyManagerPanel extends JPanel {
     }
 
     private void undeployNamesAt(List<String> names, ServerProfile server, int index) {
-        if (index >= names.size()) { ApplicationManager.getApplication().invokeLater(this::refreshExternalDeployments); return; }
-        DeploymentScannerService.undeploy(project, server, names.get(index), this::append,
-                ok -> undeployNamesAt(names, server, index + 1));
+        if (index >= names.size()) { onUi(this::refreshExternalDeployments); return; }
+        DeploymentScannerService.undeploy(project, server, names.get(index), activityOutput,
+                ok -> onUi(() -> { refreshExternalDeployments(); if (ok) undeployNamesAt(names, server, index + 1); }));
     }
 
     private void openSelectedInBrowser() {
@@ -964,37 +1008,30 @@ public final class WildFlyManagerPanel extends JPanel {
     private void startServer(boolean debug) {
         ServerProfile profile = requireServer();
         if (profile == null) return;
-        ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            try { WildFlyProcessService.getInstance().start(profile, debug, this::append); }
-            catch (Exception e) { append("ERROR: " + e.getMessage()); }
-        });
+        background("WildFly start failed", () -> WildFlyProcessService.getInstance().start(profile, debug, activityOutput));
     }
 
     private void startDebug() {
         ServerProfile profile = requireServer();
         if (profile == null) return;
-        ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            try {
+        background("WildFly debug failed", () -> {
                 WildFlyProcessService process = WildFlyProcessService.getInstance();
                 WildFlyProcessService.ServerState state = process.state(profile);
                 if (state == WildFlyProcessService.ServerState.MANAGED) {
-                    process.terminateAndWait(profile, this::append);
-                    process.start(profile, true, this::append);
+                    process.terminateAndWait(profile, activityOutput);
+                    process.start(profile, true, activityOutput);
                 } else if (state == WildFlyProcessService.ServerState.STOPPED) {
-                    process.start(profile, true, this::append);
+                    process.start(profile, true, activityOutput);
                 } else if (state == WildFlyProcessService.ServerState.DETECTED) {
                     append("WildFly is already running outside this managed process. Trying to attach to debug port " + profile.debugPort + " without restarting it.");
                 }
-                DebugAttachService.attachWhenAvailable(project, debuggerHost(profile), profile.debugPort, this::append);
-            } catch (Exception e) {
-                append("ERROR: " + e.getMessage());
-            }
+                DebugAttachService.attachWhenAvailable(project, debuggerHost(profile), profile.debugPort, activityOutput);
         });
     }
 
     private void attachDebugger() {
         ServerProfile profile = requireServer();
-        if (profile != null) DebugAttachService.attachWhenAvailable(project, debuggerHost(profile), profile.debugPort, this::append);
+        if (profile != null) DebugAttachService.attachWhenAvailable(project, debuggerHost(profile), profile.debugPort, activityOutput);
     }
 
     private void stopServer() {
@@ -1003,19 +1040,19 @@ public final class WildFlyManagerPanel extends JPanel {
         ServerProfile profile = new ServerProfile(selected);
         WildFlyProcessService process = WildFlyProcessService.getInstance();
         if (process.isRunning(profile)) {
-            process.terminate(profile, this::append);
+            background("WildFly stop failed", () -> process.terminate(profile, activityOutput));
             return;
         }
-        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+        background("WildFly detection failed", () -> {
             boolean detected = process.isDetectedRunning(profile);
             boolean canForce = detected && process.canForceStopDetected(profile);
-            ApplicationManager.getApplication().invokeLater(() -> {
+            onUi(() -> {
                 if (canForce) {
                     int answer = JOptionPane.showConfirmDialog(this,
                             "This WildFly is running locally but was not started by the current IDE session. A unique WildFly process matching this server home was found. Force stop it?",
                             "Stop Detected WildFly", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
                     if (answer == JOptionPane.YES_OPTION) {
-                        ApplicationManager.getApplication().executeOnPooledThread(() -> process.forceStopDetected(profile, this::append));
+                        background("WildFly stop failed", () -> process.forceStopDetected(profile, activityOutput));
                     }
                 } else if (detected) {
                     append("WildFly is running at " + process.endpoint(profile) + " but no unique local process could be identified safely, so it was not killed.");
@@ -1040,7 +1077,6 @@ public final class WildFlyManagerPanel extends JPanel {
         ServerProfile profile = requireServer();
         if (profile == null) return;
         Path log = WildFlyPaths.logFile(profile);
-        if (!Files.isRegularFile(log)) { append("server.log not found yet: " + log); return; }
         openInEditor(log);
     }
 
@@ -1057,15 +1093,15 @@ public final class WildFlyManagerPanel extends JPanel {
     private void openSelectedModuleFolder() {
         ServiceProfile service = singleSelectedSourceProfile();
         if (service == null) { append("Select exactly one service with an associated source project."); return; }
-        try { openFolder(BuildService.resolveModuleDir(project, service)); }
-        catch (Exception e) { append("ERROR: " + e.getMessage()); }
+        ServiceProfile snapshot = new ServiceProfile(service);
+        background("Cannot open module folder", () -> openFolder(BuildService.resolveModuleDir(project, snapshot)));
     }
 
     private void openSelectedArtifactFolder() {
         ServiceProfile service = singleSelectedSourceProfile();
         if (service == null) { append("Select exactly one service with an associated source project."); return; }
-        try { openFolder(ArtifactLocator.resolve(project, service).getParent()); }
-        catch (Exception e) { append("ERROR: " + e.getMessage()); }
+        ServiceProfile snapshot = new ServiceProfile(service);
+        background("Cannot find built artifact", () -> openFolder(ArtifactLocator.resolve(project, snapshot).getParent()));
     }
 
     private ServiceProfile singleSelectedSourceProfile() {
@@ -1078,19 +1114,19 @@ public final class WildFlyManagerPanel extends JPanel {
     }
 
     private void openInEditor(Path path) {
-        ApplicationManager.getApplication().invokeLater(() -> {
+        background("Cannot open file", () -> {
             VirtualFile file = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path);
-            if (file == null) { append("File not found: " + path); return; }
-            FileEditorManager.getInstance(project).openFile(file, true);
+            if (file == null) throw new java.io.IOException("File not found: " + path);
+            onUi(() -> FileEditorManager.getInstance(project).openFile(file, true));
         });
     }
 
     private void openFolder(Path path) {
-        try {
-            if (!Files.isDirectory(path)) { append("Folder not found: " + path); return; }
+        background("Cannot open folder", () -> {
+            if (!Files.isDirectory(path)) throw new java.io.IOException("Folder not found: " + path);
             if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(path.toFile());
-            else append("Desktop folder opening is not supported on this system: " + path);
-        } catch (Exception e) { append("ERROR opening folder: " + e.getMessage()); }
+            else throw new java.io.IOException("Desktop folder opening is not supported: " + path);
+        });
     }
 
     private void refreshServerState() {
@@ -1111,15 +1147,15 @@ public final class WildFlyManagerPanel extends JPanel {
         serverStateRefreshRunning = true;
         ServerProfile snapshot = new ServerProfile(selected);
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            WildFlyProcessService.ServerState state = process.state(snapshot);
-            ApplicationManager.getApplication().invokeLater(() -> {
-                try {
+            try {
+                WildFlyProcessService.ServerState state = process.state(snapshot);
+                onUi(() -> {
                     ServerProfile current = selectedServer();
-                    if (current != null && Objects.equals(current.id, snapshot.id)) applyServerState(current, state);
-                } finally {
-                    serverStateRefreshRunning = false;
-                }
-            });
+                    if (current != null && sameServerLocation(current, snapshot)) applyServerState(current, state);
+                });
+            } catch (ProcessCanceledException cancelled) { throw cancelled; }
+            catch (Exception error) { append("Server status refresh failed: " + PluginNotifications.message(error)); }
+            finally { serverStateRefreshRunning = false; }
         });
     }
 
@@ -1240,8 +1276,17 @@ public final class WildFlyManagerPanel extends JPanel {
     }
 
     private void syncAutoDeployWatcher() {
-        if (loading || project.isDisposed()) return;
-        ArtifactAutoDeployService.getInstance(project).configure(projectState().services, selectedServer(), this::append);
+        if (loading || disposed || project.isDisposed()) return;
+        List<ServiceProfile> services = projectState().services.stream().map(ServiceProfile::new).toList();
+        ServerProfile selected = selectedServer();
+        ServerProfile server = selected == null ? null : new ServerProfile(selected);
+        int generation = ++watcherConfigurationGeneration;
+        background("Auto Redeploy setup failed", () -> {
+            synchronized (watcherConfigurationLock) {
+                if (generation != watcherConfigurationGeneration || disposed || project.isDisposed()) return;
+                ArtifactAutoDeployService.getInstance(project).configure(services, server, activityOutput);
+            }
+        });
     }
 
     private ServerProfile selectedServer() { return (ServerProfile) serverCombo.getSelectedItem(); }
@@ -1249,7 +1294,7 @@ public final class WildFlyManagerPanel extends JPanel {
     private ServerProfile requireServer() {
         ServerProfile server = selectedServer();
         if (server == null) append("Add/select a WildFly server first.");
-        return server;
+        return server == null ? null : new ServerProfile(server);
     }
 
     private WildFlyProjectSettings.StateData projectState() { return WildFlyProjectSettings.getInstance(project).getState(); }
@@ -1307,11 +1352,53 @@ public final class WildFlyManagerPanel extends JPanel {
     }
 
     private void append(String message) {
-        if (message == null || message.isBlank()) return;
+        if (disposed || project.isDisposed() || message == null || message.isBlank()) return;
+        synchronized (pendingOutput) {
+            pendingOutput.append("[").append(LocalTime.now().format(TIME)).append("] ")
+                    .append(message.length() > MAX_ACTIVITY_CHARS ? message.substring(message.length() - MAX_ACTIVITY_CHARS) : message)
+                    .append(System.lineSeparator());
+            if (pendingOutput.length() > MAX_ACTIVITY_CHARS) pendingOutput.delete(0, pendingOutput.length() - MAX_ACTIVITY_CHARS);
+            if (outputScheduled) return;
+            outputScheduled = true;
+        }
+        // This callback only edits a Swing text buffer; no platform/model APIs are called here.
         SwingUtilities.invokeLater(() -> {
-            output.append("[" + LocalTime.now().format(TIME) + "] " + message + System.lineSeparator());
+            String batch;
+            synchronized (pendingOutput) {
+                batch = pendingOutput.toString();
+                pendingOutput.setLength(0);
+                outputScheduled = false;
+            }
+            if (disposed || project.isDisposed()) return;
+            output.append(batch);
+            int excess = output.getDocument().getLength() - MAX_ACTIVITY_CHARS;
+            if (excess > 0) output.replaceRange("", 0, excess);
             output.setCaretPosition(output.getDocument().getLength());
         });
+    }
+
+    private void onUi(Runnable action) {
+        IdeUi.later(project, () -> disposed, () -> {
+            try { action.run(); }
+            catch (Exception error) { PluginNotifications.failure(project, "WildFly action failed", error, activityOutput); }
+        });
+    }
+
+    @FunctionalInterface private interface BackgroundAction { void run() throws Exception; }
+
+    private void background(String operation, BackgroundAction action) {
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            if (disposed || project.isDisposed()) return;
+            try { action.run(); }
+            catch (Exception error) { PluginNotifications.failure(project, operation, error, activityOutput); }
+        });
+    }
+
+    @Override public void dispose() {
+        disposed = true;
+        watcherConfigurationGeneration++;
+        refreshTimer.stop();
+        synchronized (pendingOutput) { pendingOutput.setLength(0); }
     }
 
     private static JButton iconButton(Icon icon, String tooltip) {
@@ -1330,10 +1417,8 @@ public final class WildFlyManagerPanel extends JPanel {
 
     private DeploymentStatusView deploymentStatusView(String deploymentName) {
         ServerProfile server = selectedServer();
-        return new DeploymentStatusView(
-                DeploymentScannerService.status(server, deploymentName),
-                DeploymentScannerService.lastDeployedAt(server, deploymentName)
-        );
+        if (server == null || !Objects.equals(server.id, statusServerId)) return new DeploymentStatusView("NOT DEPLOYED", null);
+        return deploymentStatuses.getOrDefault(deploymentName, new DeploymentStatusView("NOT DEPLOYED", null));
     }
 
     private static JPanel compactToolbar(JComponent... components) {
@@ -1351,7 +1436,6 @@ public final class WildFlyManagerPanel extends JPanel {
         @Override public boolean isCellEditable(int row, int column) { return column == 0; }
         @Override public Object getValueAt(int row, int column) {
             ServiceProfile service = projectState().services.get(row);
-            service.migrateLegacyFields();
             return switch (column) {
                 case 0 -> service.deployAfterBuild;
                 case 1 -> ServicePresentation.displayName(project, service);

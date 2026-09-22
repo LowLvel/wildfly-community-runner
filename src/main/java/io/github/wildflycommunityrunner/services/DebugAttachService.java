@@ -7,6 +7,7 @@ import com.intellij.execution.remote.RemoteConfigurationType;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.project.Project;
+import io.github.wildflycommunityrunner.util.IdeUi;
 
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -23,16 +24,18 @@ public final class DebugAttachService {
             Instant deadline = Instant.now().plus(Duration.ofSeconds(45));
             while (!project.isDisposed() && Instant.now().isBefore(deadline)) {
                 if (isOpen(host, port)) {
-                    ApplicationManager.getApplication().invokeLater(() -> attach(project, host, port, output));
+                    IdeUi.later(project, () -> attach(project, host, port, output));
                     return;
                 }
                 try { Thread.sleep(300); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
             }
-            output.accept("DEBUG ATTACH FAILED: port " + port + " did not become available within 45 seconds.");
+            if (!project.isDisposed()) PluginNotifications.failure(project, "Debugger attach failed",
+                    "Port " + port + " did not become available within 45 seconds. Start WildFly with debugging enabled and check the profile's debug port.", output);
         });
     }
 
     public static void attach(Project project, String host, int port, Consumer<String> output) {
+        if (project.isDisposed()) return;
         try {
             RemoteConfigurationType type = RemoteConfigurationType.getInstance();
             RemoteConfiguration config = new RemoteConfiguration(project, type);
@@ -48,7 +51,7 @@ public final class DebugAttachService {
                     .buildAndExecute();
             output.accept("Debugger attach requested: " + host + ":" + port);
         } catch (ExecutionException e) {
-            output.accept("DEBUG ATTACH FAILED: " + e.getMessage());
+            PluginNotifications.failure(project, "Debugger attach failed", e, output);
         }
     }
 
