@@ -8,7 +8,6 @@ import java.net.InetAddress;
 import java.net.ServerSocket;
 import java.nio.file.Path;
 import java.util.UUID;
-import static org.junit.Assert.assertThrows;
 
 public class ManagedServerRegistryTest extends BasePlatformTestCase {
     private static final class FakeProcess extends ProcessHandler {
@@ -75,7 +74,7 @@ public class ManagedServerRegistryTest extends BasePlatformTestCase {
         var edited = new ServerProfile(profile);
         edited.debugPort++;
         assertEquals(profile.debugPort, registry.managedDebugPort(edited));
-        var error = assertThrows(IllegalStateException.class, () -> registry.startForExecution(edited, true));
+        var error = org.junit.Assert.assertThrows(IllegalStateException.class, () -> registry.startForExecution(edited, true));
         assertTrue(error.getMessage().contains(Integer.toString(profile.debugPort)));
         replacement.exit();
     }
@@ -92,3 +91,4 @@ public class ManagedServerRegistryTest extends BasePlatformTestCase {
         }
     }
 }
+
