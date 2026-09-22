@@ -22,7 +22,7 @@ public class ArtifactLocatorTest {
         return service;
     }
 
-    @Test public void resolvesNewestMatchingMavenOutputInsideNestedModule() throws Exception {
+    @Test public void refusesAmbiguousMavenOutputEvenWhenOneArchiveIsNewer() throws Exception {
         Path root = temp.getRoot().toPath();
         var service = service("MAVEN", "services/api/pom.xml", "war");
         Path old = write(root, "services/api/target/old.war", "old");
@@ -31,6 +31,8 @@ public class ArtifactLocatorTest {
         Files.setLastModifiedTime(current, FileTime.fromMillis(2000));
         write(root, "services/api/target/wrong.jar", "newer");
         write(root, "target/unrelated.war", "root output");
+        assertTrue(assertThrows(IOException.class, () -> ArtifactLocator.resolve(projectAt(root), service)).getMessage().contains("Multiple deployment artifacts"));
+        service.artifactPath = "target/api.war";
         assertEquals(current, ArtifactLocator.resolve(projectAt(root), service));
     }
 
@@ -41,6 +43,10 @@ public class ArtifactLocatorTest {
         Files.setLastModifiedTime(artifact, FileTime.fromMillis(1000));
         write(root, "nested/build/libs/original-app.jar", "original");
         write(root, "nested/build/libs/app-plain.jar", "plain");
+        write(root, "nested/build/libs/app-sources.jar", "sources");
+        write(root, "nested/build/libs/app-javadoc.jar", "javadoc");
+        write(root, "nested/build/libs/app-tests.jar", "tests");
+        write(root, "nested/build/libs/app-test-fixtures.jar", "fixtures");
         write(root, "nested/build/other.jar", "fallback");
         assertEquals(artifact, ArtifactLocator.resolve(projectAt(root), service));
     }

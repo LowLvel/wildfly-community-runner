@@ -14,9 +14,48 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SessionProcessHandlerTest extends BasePlatformTestCase {
+    public void testPreparationFailureWaitsForOwnedShutdownBeforeAllowingRerun() {
+        var process = new FakeProcess(); process.stopTerminates = false;
+        var session = new WildFlySessionProcessHandler(() -> new WildFlySessionProcessHandler.Launch(process, true), Runnable::run,
+                (cancelled, output) -> { throw new IllegalStateException("Build failed"); });
+        session.begin();
+        try {
+            assertEquals(1, process.stopCount);
+            assertFalse(session.isProcessTerminated());
+        } finally { process.exit(0); }
+        assertEquals(Integer.valueOf(1), session.getExitCode());
+    }
+    public void testApplicationPreparationFailureStopsOnlyOwnedServerAndReportsFailure() {
+        for (boolean owns : new boolean[]{true, false}) {
+            var process = new FakeProcess();
+            if (!owns) process.startNotify();
+            var session = new WildFlySessionProcessHandler(() -> new WildFlySessionProcessHandler.Launch(process, owns), Runnable::run,
+                    (cancelled, output) -> { throw new IllegalStateException("Build failed"); });
+            session.begin();
+            assertEquals(Integer.valueOf(1), session.getExitCode());
+            assertEquals(owns ? 1 : 0, process.stopCount);
+            if (!owns) process.exit(0);
+        }
+    }
+
+    public void testDetachingCancelsApplicationPreparationWithoutStoppingSharedServer() {
+        var process = new FakeProcess();
+        var reference = new AtomicReference<WildFlySessionProcessHandler>();
+        var session = new WildFlySessionProcessHandler(() -> new WildFlySessionProcessHandler.Launch(process, true), Runnable::run,
+                (cancelled, output) -> {
+                    assertFalse(cancelled.getAsBoolean());
+                    reference.get().detachProcess();
+                    assertTrue(cancelled.getAsBoolean());
+                });
+        reference.set(session);
+        session.begin();
+        assertEquals(0, process.stopCount);
+        process.exit(0);
+    }
     private static final class FakeProcess extends ProcessHandler {
         int stopCount;
-        @Override protected void destroyProcessImpl() { stopCount++; notifyProcessTerminated(0); }
+        boolean stopTerminates = true;
+        @Override protected void destroyProcessImpl() { stopCount++; if (stopTerminates) notifyProcessTerminated(0); }
         @Override protected void detachProcessImpl() { notifyProcessDetached(); }
         @Override public boolean detachIsDefault() { return false; }
         @Override public OutputStream getProcessInput() { return null; }

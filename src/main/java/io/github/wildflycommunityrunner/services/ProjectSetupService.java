@@ -78,11 +78,14 @@ public final class ProjectSetupService implements Disposable {
         initialization = ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
                 ServerProfile candidate = findHome ? environmentProfile(System.getenv()) : null;
+                var shared = readSharedServices();
                 var choices = discover ? BuildProjectDiscoveryService.discover(project) : List.<BuildProjectDiscoveryService.BuildProjectChoice>of();
                 IdeUi.later(project, () -> disposed, () -> {
                     if (!ProjectTrust.isTrusted(project)) return;
                     try {
                         applyInitialState(candidate, choices);
+                        if (!shared.isEmpty()) settings.update(data -> io.github.wildflycommunityrunner.settings.ProjectDeploymentFile
+                                .merge(Path.of(project.getBasePath()), data, shared));
                         configureWatcher(null);
                         project.getMessageBus().syncPublisher(CHANGED).initialized();
                     } catch (Exception error) { PluginNotifications.failure(project, "WildFly setup failed", error, null); }
@@ -93,6 +96,16 @@ public final class ProjectSetupService implements Disposable {
                 PluginNotifications.failure(project, "WildFly setup failed", error, null);
             }
         });
+    }
+
+    private List<ServiceProfile> readSharedServices() {
+        try {
+            return project.getBasePath() == null ? List.of()
+                    : io.github.wildflycommunityrunner.settings.ProjectDeploymentFile.read(Path.of(project.getBasePath()));
+        } catch (Exception error) {
+            PluginNotifications.failure(project, "Shared WildFly settings were not loaded", error, null);
+            return List.of(); // Invalid shared definitions must not disable existing local services and watches.
+        }
     }
 
     /** Background filesystem validation, bounded to the two explicit environment values. */
@@ -120,10 +133,10 @@ public final class ProjectSetupService implements Disposable {
         });
         settings.update(state -> {
             if (!state.onboardingCompleted && state.services.isEmpty())
-                for (var choice : choices) state.services.add(discoveredService(choice));
+                for (var choice : choices) if (suggestedApplication(choice)) state.services.add(discoveredService(choice));
             state.onboardingCompleted = true;
         });
-        for (ServiceProfile service : settings.services()) app.rememberService(service);
+        for (ServiceProfile service : settings.services()) app.rememberService(BuildService.sourceSnapshot(project, service));
         reconcileServerSelection();
     }
 
@@ -141,16 +154,20 @@ public final class ProjectSetupService implements Disposable {
     }
 
     public static ServiceProfile discoveredService(BuildProjectDiscoveryService.BuildProjectChoice choice) {
-        var service = new ServiceProfile();
+        var service = ServiceProfile.create();
         service.name = choice.name();
         service.buildSystem = choice.system().name();
         service.buildFilePath = choice.buildFilePath();
-        service.packaging = List.of("war", "ear", "jar").contains(choice.packaging()) ? choice.packaging() : "auto";
+        service.packaging = "ejb".equalsIgnoreCase(choice.packaging()) ? "jar"
+                : List.of("war", "ear", "jar").contains(choice.packaging()) ? choice.packaging() : "auto";
         service.buildTasks = service.defaultTasks();
-        service.buildArguments = choice.system() == BuildSystem.MAVEN ? "-DskipTests" : "-x test";
         service.deploymentName = service.name.replaceAll("[^A-Za-z0-9._-]", "-") + "."
                 + ("auto".equals(service.packaging) ? "war" : service.packaging);
         return service;
+    }
+
+    public static boolean suggestedApplication(BuildProjectDiscoveryService.BuildProjectChoice choice) {
+        return List.of("war", "ear", "ejb").contains(choice.packaging().toLowerCase(java.util.Locale.ROOT));
     }
 
     /** Capture settings on the application queue; serialize filesystem registration in the background. */

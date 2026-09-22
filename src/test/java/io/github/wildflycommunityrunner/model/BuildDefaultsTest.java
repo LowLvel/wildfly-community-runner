@@ -4,6 +4,18 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class BuildDefaultsTest {
+    @Test public void newServicesUseIncrementalBuildsAndRequireAutoRedeployOptIn() {
+        var service = ServiceProfile.create();
+        assertFalse(service.deployAfterBuild);
+        assertEquals("package", service.buildTasks);
+        assertEquals("", service.buildArguments);
+        BuildDefaults.changeSystem(service, BuildSystem.GRADLE);
+        assertEquals("build", service.buildTasks);
+        assertEquals("", service.buildArguments);
+        // Serializer defaults remain intact for old XML that omitted them.
+        assertTrue(new ServiceProfile().deployAfterBuild);
+        assertEquals("clean package", new ServiceProfile().buildTasks);
+    }
     @Test public void switchingBuildSystemUpdatesOnlyDefaults() {
         var service = new ServiceProfile();
         BuildDefaults.changeSystem(service, BuildSystem.GRADLE);

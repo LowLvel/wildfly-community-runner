@@ -4,8 +4,9 @@
 
 Select an extracted WildFly **Home**, containing `jboss-modules.jar` and `bin/`.
 The plugin supports local standalone mode and the deployment scanner under the
-selected base directory. It does not configure domain mode or a custom scanner
-directory declared in XML.
+selected XML. Custom scanner paths and named paths are supported. Check the
+profile's scanner name, enabled state, and any unresolved expressions. Domain
+mode remains outside the plugin's scope.
 
 If the profile reports an occupied port or another configuration, check the HTTP
 port and the base/configuration paths before starting. A listening socket alone
@@ -51,6 +52,25 @@ scanner failures. Do not delete the source archive to clear a failed deployment.
 deployment has been submitted, cancellation waits for scanner confirmation before
 releasing Auto Redeploy suppression. Closing the tool window keeps the batch
 running; closing its project cancels it.
+
+If multiple archives match, set **Artifact override**; timestamps are not used to
+choose an application. For reactor builds, set **Root build file** on each selected
+module with the same goals/options. Set **Build JAVA_HOME** if the build JDK must
+differ from the server JDK or IDE defaults. New services use `package`/`build`,
+keep tests enabled, and start with Auto Redeploy off.
+
+A leftover `.deployed` marker is historical when the server is stopped. **Unknown**
+means the selected process or scanner configuration is unverified. A deployment
+timeout may still finish in WildFly; inspect `server.log` before retrying. Adjust
+startup/deployment timeouts in the server profile when necessary. Expected HTTP
+host/port must match WildFly socket bindings; editing them does not change the
+server's bindings. Runtime-only management changes may differ from saved XML.
+
+If a shared configuration cannot find an application, reload **Shared Project
+Settings** from `.wildfly/services.xml` and check its project-relative build path.
+Missing profiles require a corresponding local profile with a unique matching
+name or an explicit selection. An imported definition never supplies credentials,
+local JDKs, or an automatic redeploy opt-in.
 
 ## Debugging and shared processes
 

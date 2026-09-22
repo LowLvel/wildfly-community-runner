@@ -30,6 +30,9 @@ public final class ServerProfileDialog extends DialogWrapper {
     private final JSpinner debugPort = new JSpinner(new SpinnerNumberModel(8787, 1, 65535, 1));
     private final JTextField startupArgumentsField = new JTextField(34);
     private final JTextField jvmOptionsField = new JTextField(34);
+    private final JTextField scannerName = new JTextField(24);
+    private final JSpinner deployTimeout = new JSpinner(new SpinnerNumberModel(120, 1, 3600, 1));
+    private final JSpinner startupTimeout = new JSpinner(new SpinnerNumberModel(120, 1, 3600, 1));
     private final ServerProfile profile;
     private final Project project;
     private boolean validating;
@@ -51,6 +54,9 @@ public final class ServerProfileDialog extends DialogWrapper {
         debugPort.setValue(profile.debugPort <= 0 ? 8787 : profile.debugPort);
         startupArgumentsField.setText(profile.startupArguments == null ? "" : profile.startupArguments);
         jvmOptionsField.setText(profile.jvmOptions == null ? "" : profile.jvmOptions);
+        scannerName.setText(profile.scannerName);
+        deployTimeout.setValue(profile.deploymentTimeoutSeconds);
+        startupTimeout.setValue(profile.startupTimeoutSeconds);
         init();
         com.intellij.openapi.util.Disposer.register(getDisposable(), pendingSecrets);
         reloadConfigurations(profile.configuration);
@@ -74,11 +80,21 @@ public final class ServerProfileDialog extends DialogWrapper {
         addRow(panel, c, "WildFly Home", homeField, browseHomeButton());
         addRow(panel, c, "Configuration", configCombo, null);
         addRow(panel, c, "JAVA_HOME", javaHomeField, browseButton(javaHomeField, JFileChooser.DIRECTORIES_ONLY));
-        addRow(panel, c, "HTTP host", hostField, null);
-        addRow(panel, c, "HTTP port", httpPort, null);
+        addRow(panel, c, "Expected HTTP host", hostField, null);
+        addRow(panel, c, "Expected HTTP port", httpPort, null);
         addRow(panel, c, "Debug port", debugPort, null);
+        addRow(panel, c, "Deployment scanner name", scannerName, null);
+        addRow(panel, c, "Deployment timeout (seconds)", deployTimeout, null);
+        addRow(panel, c, "Startup timeout (seconds)", startupTimeout, null);
         addRow(panel, c, "Startup args", startupArgumentsField, null);
-        addRow(panel, c, "Quick JVM option", new JvmOptionShortcutPanel(jvmOptionsField), null);
+        hostField.setToolTipText("Expected application endpoint; does not change WildFly socket bindings.");
+        httpPort.setToolTipText("Expected application port; configure socket bindings in WildFly XML or startup arguments.");
+        JCheckBox presets = new JCheckBox("Show JVM option presets");
+        JvmOptionShortcutPanel shortcuts = new JvmOptionShortcutPanel(jvmOptionsField);
+        shortcuts.setVisible(false);
+        presets.addActionListener(event -> { shortcuts.setVisible(presets.isSelected()); panel.revalidate(); });
+        addRow(panel, c, "Advanced", presets, null);
+        addRow(panel, c, "", shortcuts, null);
         addRow(panel, c, "WildFly JVM options", jvmOptionsField, null);
 
         JLabel hint = new JLabel("Sensitive -D properties use IDE Passwords. Custom keys can use -Dkey=${env:VARIABLE}.");
@@ -170,6 +186,9 @@ public final class ServerProfileDialog extends DialogWrapper {
         profile.debugPort = (Integer) debugPort.getValue();
         profile.startupArguments = startupArgumentsField.getText().trim();
         profile.jvmOptions = jvmOptionsField.getText().trim();
+        profile.scannerName = scannerName.getText().isBlank() ? "default" : scannerName.getText().trim();
+        profile.deploymentTimeoutSeconds = (Integer) deployTimeout.getValue();
+        profile.startupTimeoutSeconds = (Integer) startupTimeout.getValue();
     }
 
     @Override
@@ -229,6 +248,7 @@ public final class ServerProfileDialog extends DialogWrapper {
     private String validationFields() {
         return nameField.getText() + "\n" + homeField.getText() + "\n" + configCombo.getEditor().getItem()
                 + "\n" + javaHomeField.getText() + "\n" + hostField.getText() + "\n" + httpPort.getValue() + "\n" + debugPort.getValue()
-                + "\n" + startupArgumentsField.getText() + "\n" + jvmOptionsField.getText();
+                + "\n" + startupArgumentsField.getText() + "\n" + jvmOptionsField.getText()
+                + "\n" + scannerName.getText() + "\n" + deployTimeout.getValue() + "\n" + startupTimeout.getValue();
     }
 }

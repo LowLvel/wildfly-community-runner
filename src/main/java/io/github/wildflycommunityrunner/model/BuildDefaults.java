@@ -11,6 +11,8 @@ public final class BuildDefaults {
         String previousArguments = previous == BuildSystem.MAVEN ? "-DskipTests" : "-x test";
         if (profile.buildTasks == null || profile.buildTasks.isBlank() || previousTasks.equals(profile.buildTasks.trim())) {
             profile.buildTasks = system == BuildSystem.MAVEN ? "clean package" : "clean build";
+        } else if ((previous == BuildSystem.MAVEN ? "package" : "build").equals(profile.buildTasks.trim())) {
+            profile.buildTasks = system == BuildSystem.MAVEN ? "package" : "build";
         }
         if (previousArguments.equals(profile.buildArguments == null ? "" : profile.buildArguments.trim())) {
             profile.buildArguments = system == BuildSystem.MAVEN ? "-DskipTests" : "-x test";

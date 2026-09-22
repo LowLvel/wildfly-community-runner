@@ -66,6 +66,9 @@ public final class ArtifactAutoDeployService implements Disposable {
                 .filter(service -> service.deployAfterBuild).map(ServiceProfile::new).toList();
         for (ServiceProfile service : configuredServices) {
             try {
+                var sameTarget = services.stream().filter(other -> io.github.wildflycommunityrunner.util.DeploymentNames.name(other)
+                        .equalsIgnoreCase(io.github.wildflycommunityrunner.util.DeploymentNames.name(service))).toList();
+                io.github.wildflycommunityrunner.util.DeploymentNames.requireUnique(sameTarget);
                 Path source = BuildService.resolveBuildFile(project, service).toRealPath();
                 slots.put(service.id, new Slot(service, server == null ? null : new ServerProfile(server),
                         source.getParent(), source, generation));
@@ -187,6 +190,7 @@ public final class ArtifactAutoDeployService implements Disposable {
         if (relative == null) return false;
         String name = relative.getFileName().toString();
         if (exact != null) return exact.equals(name);
+        if (ArtifactLocator.auxiliaryArchive(name)) return false;
         String lower = name.toLowerCase(Locale.ROOT);
         String packaging = Objects.toString(service.packaging, "auto").toLowerCase(Locale.ROOT);
         return switch (packaging) {
@@ -240,6 +244,12 @@ public final class ArtifactAutoDeployService implements Disposable {
             if (!current(slot) || !ProjectTrust.isTrusted(project) || coordinator.suppressed(slot.source, fingerprint)
                     || fingerprint.equals(slot.failed)) return;
             String name = DeploymentScannerService.safeDeploymentName(ArtifactLocator.effectiveDeploymentName(slot.service, artifact));
+            var associated = io.github.wildflycommunityrunner.settings.WildFlyApplicationSettings.getInstance().findDeploymentSource(slot.server, name);
+            if (associated != null && !BuildService.resolveBuildFile(project, associated).toRealPath().equals(slot.source)) {
+                slot.lastCheck = "Deployment belongs to another source. Use Associate Source before enabling Auto Redeploy.";
+                out("Auto Redeploy skipped " + slot.service.name + ": " + slot.lastCheck);
+                return;
+            }
             var claim = coordinator.claim(WildFlyPaths.deploymentsDir(slot.server).resolve(name), fingerprint);
             if (claim.unchanged()) return;
             if (claim.busy() != null) {
@@ -254,6 +264,8 @@ public final class ArtifactAutoDeployService implements Disposable {
                 out("Artifact changed; auto redeploying " + slot.service.name + " (" + artifact.getFileName() + ")");
                 DeploymentScannerService.deploy(project, slot.server, artifact, name, this::out, ok -> {
                     try {
+                        if (ok) io.github.wildflycommunityrunner.settings.WildFlyApplicationSettings.getInstance()
+                                .rememberDeployment(slot.server, name, BuildService.sourceSnapshot(project, slot.service));
                         synchronized (ArtifactAutoDeployService.this) { if (current(slot)) slot.failed = ok ? null : fingerprint; }
                         owned.complete(ok);
                     } finally { finished(slot, false); }

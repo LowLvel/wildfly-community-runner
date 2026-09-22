@@ -1,6 +1,8 @@
 package io.github.wildflycommunityrunner.run;
 
 import com.intellij.execution.ExecutionResult;
+import com.intellij.execution.ExecutionManager;
+import com.intellij.execution.ExecutionListener;
 import com.intellij.execution.configurations.ConfigurationTypeUtil;
 import com.intellij.execution.configurations.RemoteState;
 import com.intellij.execution.executors.DefaultDebugExecutor;
@@ -9,6 +11,10 @@ import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessListener;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
+import com.intellij.execution.runners.ExecutionEnvironment;
+import com.intellij.execution.runners.ProgramRunner;
+import com.intellij.execution.ui.RunContentDescriptor;
+import org.jetbrains.idea.maven.execution.MavenRunConfiguration;
 import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
@@ -48,6 +54,25 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
         Path root = temporary.getRoot().toPath(), base = root.resolve("server-base");
         var watcher = ArtifactAutoDeployService.getInstance(getProject());
         var processes = WildFlyProcessService.getInstance();
+        var contentManager = ExecutionManager.getInstance(getProject()).getContentManager();
+        var buildDescriptors = new CopyOnWriteArrayList<RunContentDescriptor>();
+        var builds = getProject().getMessageBus().connect(getTestRootDisposable());
+        builds.subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
+            @Override public void processStartScheduled(String executorId, ExecutionEnvironment environment) {
+                if (!(environment.getRunProfile() instanceof MavenRunConfiguration)) return;
+                ProgramRunner.Callback original = environment.getCallback();
+                environment.setCallback(new ProgramRunner.Callback() {
+                    @Override public void processStarted(RunContentDescriptor descriptor) {
+                        buildDescriptors.add(descriptor);
+                        if (original != null) original.processStarted(descriptor);
+                    }
+                    @Override public void processNotStarted(Throwable cause) {
+                        if (original != null) original.processNotStarted(cause);
+                    }
+                });
+            }
+        });
+        var originalJdks = List.of(com.intellij.openapi.projectRoots.ProjectJdkTable.getInstance().getAllJdks());
         try {
             background(() -> {
                 Path configuration = base.resolve("configuration"); Files.createDirectories(configuration);
@@ -110,14 +135,20 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             Path artifact = module.resolve("target/smoke.war");
             var service = new ServiceProfile(); service.name = "Runtime WAR"; service.deploymentName = "smoke.war";
             service.buildFilePath = module.resolve("pom.xml").toString(); service.artifactPath = artifact.toString();
+            service.buildTasks = "validate"; service.buildArguments = "-q -o";
+            service.buildJavaHome = System.getProperty("java.home");
             background(() -> {
-                Files.createDirectories(module); Files.writeString(module.resolve("pom.xml"), "<project/>");
+                Files.createDirectories(module); Files.writeString(module.resolve("pom.xml"), """
+                        <project xmlns="http://maven.apache.org/POM/4.0.0">
+                          <modelVersion>4.0.0</modelVersion><groupId>fixture</groupId>
+                          <artifactId>smoke</artifactId><version>1</version><packaging>pom</packaging>
+                        </project>
+                        """);
                 war(artifact, "first"); return null;
             });
-            var deployed = new CompletableFuture<Boolean>();
-            DeploymentScannerService.deploy(getProject(), server, artifact, service.deploymentName, output::add, deployed::complete);
-            await(deployed::isDone, Duration.ofSeconds(90), diagnostic("Initial deployment timed out"));
-            assertTrue(diagnostic("Initial deployment failed"), deployed.get());
+            // Exercise the Run/Debug application pipeline with a real native Maven build and scanner.
+            background(() -> { ApplicationLaunch.deploy(getProject(), server, List.of(service), () -> false, output::add); return null; });
+            assertNotNull(settings.findDeploymentSource(server, service.deploymentName));
             waitHttp(server, "/smoke/", "first:credential-ok");
             assertEquals("DEPLOYED", background(() -> DeploymentScannerService.status(server, "smoke.war")));
             var timestamp = background(() -> DeploymentScannerService.lastDeployedAt(server, "smoke.war"));
@@ -145,6 +176,19 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             await(debug::isProcessTerminated, Duration.ofSeconds(30), "Debug owner Stop did not finish");
             background(() -> { waitStopped(server); return null; });
         } finally {
+            builds.disconnect();
+            getProject().getService(BuildLifecycleService.class).cancel();
+            // Headless Maven consoles are not necessarily registered in RunContentManager.
+            for (var descriptor : buildDescriptors) {
+                var handler = descriptor.getProcessHandler();
+                if (handler != null && !handler.isProcessTerminated()) {
+                    handler.destroyProcess();
+                    await(handler::isProcessTerminated, Duration.ofSeconds(30), "Application build cleanup timed out");
+                }
+                if (contentManager.getAllDescriptors().contains(descriptor))
+                    contentManager.removeRunContent(DefaultRunExecutor.getRunExecutorInstance(), descriptor);
+                if (!Disposer.isDisposed(descriptor)) Disposer.dispose(descriptor);
+            }
             background(() -> { watcher.configure(List.of(), server, output::add); processes.terminate(server, output::add); return null; });
             for (ExecutionResult session : sessions) {
                 ProcessHandler handler = session.getProcessHandler();
@@ -153,6 +197,11 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
                 if (session.getExecutionConsole() != null) Disposer.dispose(session.getExecutionConsole());
             }
             settings.loadState(previous); TrustedProjects.setProjectTrusted(getProject(), trusted);
+            com.intellij.openapi.application.WriteAction.run(() -> {
+                var table = com.intellij.openapi.projectRoots.ProjectJdkTable.getInstance();
+                for (var sdk : table.getAllJdks())
+                    if (!originalJdks.contains(sdk) && sdk.getName().startsWith("WildFly build (")) table.removeJdk(sdk);
+            });
             temporary.delete();
         }
     }

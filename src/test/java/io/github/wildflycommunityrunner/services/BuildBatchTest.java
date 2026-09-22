@@ -56,7 +56,7 @@ public class BuildBatchTest extends BasePlatformTestCase {
         assertEquals(List.of("orders"), h.names);
         h.exit(0);
         assertEquals(1, h.deploys.size());
-        assertEquals(1, h.leases);
+        assertEquals(2, h.leases);
         assertEquals(1, h.builds.size());
         h.deploys.getFirst().complete(true); h.drain();
         assertEquals(List.of("orders", "billing"), h.names);
@@ -72,12 +72,12 @@ public class BuildBatchTest extends BasePlatformTestCase {
         var batch = h.batch(BuildBatch.Mode.BUILD_ONLY, false); h.drain();
         batch.cancel();
         assertEquals(1, h.processes.getFirst().stops);
-        assertEquals(1, h.leases);
+        assertEquals(2, h.leases);
         assertFalse(batch.completion().isDone());
         h.exit(0);
         assertEquals(BuildOperation.Outcome.CANCELLED, batch.completion().join().outcome());
         assertEquals(1, h.builds.size());
-        assertEquals(1, h.releases);
+        assertEquals(2, h.releases);
         assertTrue(h.deploys.isEmpty());
     }
 
@@ -86,12 +86,12 @@ public class BuildBatchTest extends BasePlatformTestCase {
         var batch = h.batch(BuildBatch.Mode.FORCE_DEPLOY, false); h.drain(); h.exit(0);
         batch.cancel();
         assertTrue(batch.status().text().contains("current deployment"));
-        assertEquals(1, h.leases);
+        assertEquals(2, h.leases);
         assertFalse(batch.completion().isDone());
         h.deploys.getFirst().complete(true); h.drain();
         assertEquals(BuildOperation.Outcome.CANCELLED, batch.completion().join().outcome());
         assertEquals(1, h.builds.size());
-        assertEquals(1, h.releases);
+        assertEquals(2, h.releases);
     }
 
     public void testFailedBuildStopsQueueAndReleasesOnce() {
@@ -100,7 +100,7 @@ public class BuildBatchTest extends BasePlatformTestCase {
         batch.cancel(); batch.dispose(); h.drain();
         assertEquals(BuildOperation.Outcome.FAILED, batch.completion().join().outcome());
         assertEquals(1, h.builds.size());
-        assertEquals(1, h.releases);
+        assertEquals(2, h.releases);
         assertTrue(h.deploys.isEmpty());
     }
 
@@ -128,7 +128,22 @@ public class BuildBatchTest extends BasePlatformTestCase {
         active.dispose();
         assertEquals(0, h.releases);
         h.deploys.getFirst().complete(true); h.drain();
-        assertEquals(1, h.releases);
+        assertEquals(2, h.releases);
         assertEquals(BuildOperation.Outcome.CANCELLED, active.completion().join().outcome());
+    }
+
+    public void testSharedRootBuildRunsOnceAndDeploysBothApplicationsUnderSuppression() {
+        var h = new Harness();
+        var a = ServiceProfile.create(); a.name = "orders"; a.buildRootPath = "pom.xml";
+        var b = ServiceProfile.create(); b.name = "billing"; b.buildRootPath = "pom.xml";
+        var batch = new BuildBatch(List.of(a, b), new ServerProfile(), BuildBatch.Mode.FORCE_DEPLOY, false, h, h.queue::add, ignored -> {});
+        batch.start(); h.drain();
+        assertEquals(2, h.leases);
+        h.exit(0); h.deploys.getFirst().complete(true); h.drain();
+        assertEquals(1, h.builds.size()); assertEquals(2, h.deploys.size());
+        assertEquals(2, h.leases);
+        h.deploys.getLast().complete(true); h.drain();
+        assertEquals(BuildOperation.Outcome.SUCCESS, batch.completion().join().outcome());
+        assertEquals(0, h.leases); assertEquals(2, h.releases);
     }
 }

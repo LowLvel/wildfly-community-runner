@@ -20,7 +20,9 @@ The plugin supports local standalone mode and requires no paid IDE application-s
 ## First use
 
 Open a trusted project. On its first setup, the plugin discovers nested Maven and
-Gradle services in the background. Existing service settings take precedence, and
+Gradle projects in the background. WAR, EAR, and Maven EJB modules are suggested
+as applications. Library JARs and aggregator projects remain available through
+**Add Service** when you explicitly want to deploy their output. Existing service settings take precedence, and
 removing a service does not cause it to reappear on the next project open. Use
 **Discover Projects** to add services later.
 
@@ -57,20 +59,22 @@ Swing theme. See [image provenance](docs/MARKETPLACE.md#images).
 
 Each configured service stores:
 
-- Maven or Gradle build file.
-- Build goals/tasks, arguments, and JVM options.
+- Maven or Gradle module build file, plus an optional reactor/root build file.
+- Build goals/tasks, arguments, JVM options, and optional local build JAVA_HOME.
 - WAR/EAR/JAR artifact configuration.
 - Stable WildFly deployment name.
-- Optional browser context path.
+- Optional browser context path or full HTTP(S) URL.
 - **Auto Redeploy** — watches the final WAR/EAR/JAR. Any rebuild of that artifact can trigger redeploy, including builds started from IntelliJ's Maven/Gradle tool windows or a terminal.
 
 The first table column is **Auto**, not a selection/bulk flag. Selection is temporary action scope; Auto Redeploy is persistent behavior. Multi-select and the context menu can enable/disable Auto Redeploy for several services at once.
 
+New services use Maven `package` or Gradle `build`, with tests enabled and Auto
+Redeploy off. Existing saved build and Auto settings remain unchanged on upgrade.
+
 Actions:
 
-- **Build** — runs the build. If Auto is enabled, the artifact watcher handles redeploy when the output file changes.
-- **Build and Deploy** — always deploys after a successful build and temporarily suppresses the watcher to prevent duplicate redeploys.
-- **Build without Deploy** — never deploys and temporarily suppresses the watcher.
+- **Build and Deploy** — the primary action; deploys after a successful build and temporarily suppresses the watcher to prevent duplicate redeploys.
+- **Build Only** — builds without deploying and temporarily suppresses the watcher for the entire selected batch.
 - **Redeploy** — deploys the latest built artifact.
 - **Undeploy**.
 - **Open in Browser**.
@@ -79,26 +83,32 @@ Actions:
 
 If the selected WildFly has active deployments that are not configured in the current IntelliJ project, they appear in a separate **External deployments** section beneath the project-service list.
 
-The plugin keeps an application-wide registry of service source paths. If an external deployment was previously associated with a Maven/Gradle project, it can still be built and redeployed from another IntelliJ project window. Unknown deployments can use **Associate Source…** to pick their build file, and remembered external services can be added to the current project with one action.
+The plugin keeps an application-wide registry of service source paths. A successful deployment or **Associate Source…** binds its exact deployment name and server instance to its source. That binding can be used to build and redeploy from another IntelliJ project window. Similar filenames or display names never establish a binding; old unscoped registry entries require explicit association. Unknown deployments can use **Associate Source…** to pick their build file, and remembered external services can be added to the current project with one action.
 
 External deployments support redeploy, undeploy, browser launch, and — when a remembered source exists — build/source/artifact actions.
 
 ## Deployment status
 
-The UI intentionally exposes only four current states:
+The UI combines scanner markers with the selected local server state:
 
 - **Deployed**
 - **Deploying**
 - **Failed**
 - **Not deployed**
+- **Server stopped** — saved markers do not imply a running application.
+- **Unknown** — server identity or scanner configuration could not be verified.
 
-Historical scanner markers such as `.undeployed` are not shown as separate persistent states. Status colors reuse IntelliJ's theme-aware success/warning/failure palette. Hover a deployment status to see the last successful deployment time, taken from WildFly's `.deployed` marker.
+These are scanner observations, not application health checks. Historical scanner markers such as `.undeployed` are not shown as separate persistent states. Status colors reuse IntelliJ's theme-aware success/warning/failure palette. Hover a deployment status to see the last successful deployment time, taken from WildFly's `.deployed` marker.
 
 ## Browser launch
 
 **Open in Browser** uses the selected server's host and configurable HTTP port (default `8080`). If a service has a browser context-path override, that is used. Otherwise the context is derived from the deployment name, e.g. `orders.war` -> `http://localhost:8080/orders/`.
 
-For unusual deployments where the WildFly context root differs from the WAR name, set **Browser context path** in Service Details.
+For unusual deployments where the WildFly context root differs from the WAR name,
+set **Browser context path** or **Browser URL** in Service Details. The full URL
+supports HTTPS and custom endpoints; IPv6 hosts are supported. EAR and JAR
+deployments require an explicit context or URL because their web endpoint cannot
+be inferred reliably.
 
 ## Server lifecycle across projects
 
@@ -108,7 +118,7 @@ An externally started local JVM is shown as **Detected local WildFly** when its 
 
 For detected servers, Stop requires a unique local process match and rechecks its identity before termination. Windows uses a bounded, read-only local CIM query because JDK 21 does not expose process arguments there. Restricted process metadata leaves the server unverified. Ambiguous or remote processes are never killed automatically.
 
-Profiles targeting the same instance share its managed process even when their profile IDs differ. Different configurations cannot start concurrently against the same server base directory. Path shortcuts honor `jboss.server.base.dir`, `jboss.server.config.dir`, and `jboss.server.log.dir` options. Deployment-scanner operations use the default `deployments` directory under that base; custom scanner paths in XML are not supported.
+Profiles targeting the same instance share its managed process even when their profile IDs differ. Different configurations cannot start concurrently against the same server base directory. Path shortcuts honor `jboss.server.base.dir`, `jboss.server.config.dir`, and `jboss.server.log.dir` options. Deployment-scanner operations read the selected scanner from the profile's XML, including custom paths, named paths, and resolvable property expressions. The default scanner name is `default`. Missing, disabled, or unresolved scanners produce an actionable error before deployment.
 
 Custom directory overrides containing spaces or shell metacharacters are rejected
 before launch because WildFly distribution scripts parse them incorrectly. The
@@ -120,17 +130,33 @@ Each profile supports:
 
 - WildFly Home and `standalone*.xml`.
 - Java Home.
-- Host and HTTP port.
+- Expected HTTP host and port, used for detection and browser links. These do not change WildFly socket bindings.
+- Scanner name and startup/deployment timeouts (default 120 seconds each).
 - Configurable debug port (default `8787`).
 - Startup arguments.
 - WildFly JVM options.
-- JVM-option shortcuts/path pickers including Oracle `-Doracle.net.tns_admin=...`, trust store, key store, temp directory, and custom options.
+- Expandable advanced JVM-option shortcuts/path pickers including Oracle `-Doracle.net.tns_admin=...`, trust store, key store, temp directory, and custom options.
 
 ## Maven and Gradle
 
 Maven builds use IntelliJ's bundled Maven runner and its Maven configuration.
+**Build JAVA_HOME** overrides the build JDK independently of the server JDK; when
+empty, Maven keeps the IDE runner JRE and Gradle keeps its inherited environment.
+Gradle builds are wrapper/CLI executions, not IntelliJ Gradle JVM executions.
+Maven reuses an IDE SDK for the selected path or registers one, so native Maven
+Rerun keeps the chosen JDK.
 
 Gradle builds prefer the service's `gradlew` / `gradlew.bat`, walking upward from the selected module. If no wrapper is found, system Gradle is used.
+
+For multi-module builds, set the same **Root build file** and build options on
+the participating services. The batch runs that root build once, then deploys
+each selected module's archive. Maven/Gradle handles dependency ordering; the
+plugin does not infer a reactor from service selection. Artifact lookup remains
+relative to each module.
+
+Archive selection ignores common source, Javadoc, test, plain, and original JARs.
+If multiple deployable candidates remain, set **Artifact override** explicitly;
+the plugin does not choose the newest filename.
 
 Selected services build sequentially, with progress in the tool window and IDEA's
 background-task indicator. **Cancel Build** stops the owned build process and
@@ -168,10 +194,12 @@ observes an output directory's parent. Gradle's `build/` artifact fallback is
 covered alongside `build/libs/`.
 
 Open projects coordinate automatic requests for the same deployment. Explicit
-**Build and Deploy** / **Build without Deploy** suppression follows the source
+**Build and Deploy** / **Build Only** suppression follows the source
 across projects, uses counted leases, and records the final build fingerprint
 after a short settling period. Manual and automatic scanner operations targeting
-the same deployment run sequentially. Failed automatic deployments are retried
+the same deployment run sequentially. Duplicate deployment names within a selected
+batch are rejected. Auto Redeploy skips a target associated with a different
+source. Failed automatic deployments are retried
 when artifact content changes; use **Redeploy** to retry unchanged output.
 
 Resource usage is bounded: a blocking watcher and scheduled worker per configured
@@ -180,24 +208,58 @@ successful automatic deployments. There is no periodic scan of source trees.
 
 ## Deployment / hot redeploy
 
+Deployments require a verified running local server and an enabled scanner in the
+selected XML. The plugin reads configuration; it does not change it or query a
+management API. Changes made only in the running management model may require
+saving/reloading the XML before the plugin can observe them. A deployment timeout
+means confirmation was not received; the submitted request may still complete.
+
 Deployments use WildFly's standalone deployment scanner. Built artifacts are copied to a temporary file, atomically replaced when possible, and then `.dodeploy` is created. Only the selected service is touched; other deployments remain running.
 
-**Undeploy** handles project services and external deployments identically. For an active deployment it first removes WildFly's `.deployed` marker (the deployment-scanner undeploy command), waits briefly for scanner confirmation, then removes the scanner-managed artifact copy and residual markers from `standalone/deployments`. Failed, pending, or artifact-only external deployments are cleaned up as well, so they cannot remain as stale scanner candidates. Source artifacts under Maven `target/` or Gradle `build/libs/` are never deleted.
+**Undeploy** handles project services and external deployments identically. For an active deployment it first removes WildFly's `.deployed` marker (the deployment-scanner undeploy command), waits briefly for scanner confirmation, then removes the scanner-managed artifact copy and residual markers from the configured scanner directory. Failed, pending, or artifact-only external deployments are cleaned up as well, so they cannot remain as stale scanner candidates. Source artifacts under Maven `target/` or Gradle `build/libs/` are never deleted.
 
-External deployments without an associated source can still be redeployed by re-triggering `.dodeploy` on the artifact already present in `standalone/deployments`.
+External deployments without an associated source can still be redeployed by re-triggering `.dodeploy` on the artifact already present in the configured scanner directory.
 
 ## Debugging
 
 IDEA's **Run → Edit Configurations → Add → WildFly** offers two native configuration types:
 
-- **Local Server** — select an existing WildFly profile, then use IDEA's Run or Debug buttons. Output appears in the standard Run/Debug console. Debug uses the profile's configured JDWP port and the Java debugger, including breakpoints and source navigation.
+- **Local Server** — select an existing WildFly profile and optionally select applications. Run/Debug starts or reuses the server, waits for its expected HTTP endpoint, builds the selected applications, and deploys them. Leave the application list empty for a server-only session. Output appears in the standard Run/Debug console. Debug uses the profile's configured JDWP port and the Java debugger, including breakpoints and source navigation.
 - **Attach Debugger** — use Debug to connect to an already running WildFly. Stopping this session disconnects the debugger and leaves the server running.
 
-Configurations reference the application-wide profile by ID; they do not duplicate JVM options or machine paths. Create profiles in the WildFly tool window. A missing profile is reported in the configuration editor. Shared configuration files need a corresponding local profile selection on each machine.
+Configurations reference the application-wide profile by ID, with a unique profile
+name as a fallback on another machine; JVM options and server paths stay local.
+Application selections use project-relative build-file paths. Commit portable
+service definitions (below) alongside a shared run configuration. Create the
+corresponding local server profile on each machine. Missing or ambiguous servers
+or services are reported instead of silently changing the selection.
 
-A Local Server session reuses a managed server when possible. Stop terminates a server started by that session; Stop on a reused session only disconnects it. Detach leaves the global server available to other projects. An externally started server uses the Attach Debugger configuration. Maven/Gradle builds and multi-service deployment remain in the WildFly tool window; IDEA does not add an implicit Make task for these server configurations.
+A Local Server session reuses a managed server when possible. Stop terminates a server started by that session; Stop on a reused session only disconnects it. Detach leaves the global server available to other projects. An externally started server uses the Attach Debugger configuration. Stopping or detaching during application preparation cancels that session's build batch. Preparation failures fail the session and stop a server it started, while preserving a reused server. IDEA does not add an implicit Make task; the configured Maven/Gradle build owns compilation.
 
 **Debug** starts WildFly with `--debug <configured-port>` when the server is stopped, then attaches IntelliJ's debugger. If a server is already detected externally, the plugin does not restart it; it attempts to attach to the configured debug port.
+
+## Shared project settings
+
+Use the service toolbar's **Shared Project Settings** action to save or reload
+`.wildfly/services.xml`. Commit this file to share module paths, root builds,
+tasks/arguments, artifact choices, deployment names, and browser endpoints.
+Paths must stay inside the project; an artifact override is relative to its module.
+Definitions load on trusted project startup and merge by module build-file path.
+Reloading does not delete local services absent from the file.
+
+```xml
+<wildfly-services version="1">
+  <service name="orders" buildSystem="MAVEN" buildFile="orders/pom.xml"
+           buildRoot="pom.xml" packaging="war" tasks="package" arguments=""
+           deploymentName="orders.war" artifact="target/orders.war"
+           contextPath="/orders" browserUrl=""/>
+</wildfly-services>
+```
+
+Server installations, JDK paths, JVM options, and Auto Redeploy choices stay local.
+Imports preserve those local service values; new imported services have Auto off.
+Known sensitive build arguments are rejected. Review ordinary arguments and URLs
+before committing, as application-specific values may still be private.
 
 ## IntelliJ threading
 

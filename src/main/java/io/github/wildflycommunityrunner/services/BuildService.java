@@ -11,6 +11,15 @@ import java.util.function.Consumer;
 public final class BuildService {
     private BuildService() {}
 
+    /** Global source associations must never resolve relative paths against a different IDE project. */
+    public static ServiceProfile sourceSnapshot(Project project, ServiceProfile service) {
+        ServiceProfile source = new ServiceProfile(service);
+        Path base = Path.of(project.getBasePath() == null ? "." : project.getBasePath()).toAbsolutePath().normalize();
+        if (source.buildFilePath != null && !source.buildFilePath.isBlank()) source.buildFilePath = base.resolve(source.buildFilePath).normalize().toString();
+        if (source.buildRootPath != null && !source.buildRootPath.isBlank()) source.buildRootPath = base.resolve(source.buildRootPath).normalize().toString();
+        return source;
+    }
+
     public static BuildOperation build(Project project, ServiceProfile service, Consumer<String> output) {
         ServiceProfile snapshot = new ServiceProfile(service);
         var operation = new BuildOperation(command -> ApplicationManager.getApplication().executeOnPooledThread(command));
@@ -19,6 +28,12 @@ public final class BuildService {
             try {
                 if (project.isDisposed()) { operation.cancel(); return; }
                 snapshot.migrateLegacyFields();
+                if (snapshot.buildRootPath != null && !snapshot.buildRootPath.isBlank()) snapshot.buildFilePath = snapshot.buildRootPath;
+                if (snapshot.buildJavaHome != null && !snapshot.buildJavaHome.isBlank()) {
+                    String executable = System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java";
+                    if (!java.nio.file.Files.isRegularFile(Path.of(snapshot.buildJavaHome).resolve("bin").resolve(executable)))
+                        throw new IllegalArgumentException("Build JAVA_HOME does not contain a Java executable: " + snapshot.buildJavaHome);
+                }
                 io.github.wildflycommunityrunner.security.SensitiveProperties.requireJvmField(snapshot.buildTasks, "build tasks/goals");
                 io.github.wildflycommunityrunner.security.SensitiveProperties.requireJvmField(snapshot.buildArguments, "build arguments");
                 if (snapshot.buildSystemEnum() == BuildSystem.GRADLE) GradleBuildService.build(project, snapshot, operation, output);

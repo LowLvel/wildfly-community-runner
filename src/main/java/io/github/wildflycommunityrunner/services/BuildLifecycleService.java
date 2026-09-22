@@ -36,23 +36,34 @@ public final class BuildLifecycleService implements Disposable {
 
     public synchronized boolean start(List<ServiceProfile> services, ServerProfile server, BuildBatch.Mode mode,
                                       boolean external, Consumer<String> output) {
-        if (disposed || project.isDisposed() || services.isEmpty()) return false;
+        return startBatch(services, server, mode, external, output) != null;
+    }
+
+    public synchronized BuildBatch startBatch(List<ServiceProfile> services, ServerProfile server, BuildBatch.Mode mode,
+                                              boolean external, Consumer<String> output) {
+        if (disposed || project.isDisposed() || services.isEmpty()) return null;
+        try {
+            if (mode == BuildBatch.Mode.FORCE_DEPLOY) io.github.wildflycommunityrunner.util.DeploymentNames.requireUnique(services);
+        } catch (IllegalArgumentException invalid) {
+            PluginNotifications.failure(project, "Build not started", invalid, output);
+            return null;
+        }
         if (active != null && !active.completion().isDone()) {
             output.accept("A build is already running. Cancel it or wait for completion before starting another.");
-            return false;
+            return null;
         }
         if (!ProjectTrust.isTrusted(project)) {
             PluginNotifications.failure(project, "Build not started", "Trust this project before running a build.", output);
-            return false;
+            return null;
         }
         if (mode == BuildBatch.Mode.FORCE_DEPLOY && server == null) {
             PluginNotifications.failure(project, "Build not started", "Select a WildFly server for Build and Deploy.", output);
-            return false;
+            return null;
         }
         var watcher = ArtifactAutoDeployService.getInstance(project);
         var backend = new BuildBatch.Backend() {
             @Override public BuildOperation build(ServiceProfile service) {
-                WildFlyApplicationSettings.getInstance().rememberService(service);
+                WildFlyApplicationSettings.getInstance().rememberService(BuildService.sourceSnapshot(project, service));
                 return BuildService.build(project, service, output);
             }
             @Override public CompletableFuture<Boolean> deploy(ServiceProfile service, ServerProfile target) {
@@ -61,10 +72,13 @@ public final class BuildLifecycleService implements Disposable {
                     try {
                         if (disposed || project.isDisposed()) { result.complete(false); return; }
                         var artifact = ArtifactLocator.resolve(project, service);
-                        var source = new ServiceProfile(service);
+                        var source = BuildService.sourceSnapshot(project, service);
                         source.deploymentName = ArtifactLocator.effectiveDeploymentName(source, artifact);
                         WildFlyApplicationSettings.getInstance().rememberService(source);
-                        DeploymentScannerService.deploy(project, target, artifact, source.deploymentName, output, result::complete);
+                        DeploymentScannerService.deploy(project, target, artifact, source.deploymentName, output, ok -> {
+                            if (ok) WildFlyApplicationSettings.getInstance().rememberDeployment(target, source.deploymentName, source);
+                            result.complete(ok);
+                        });
                     } catch (Exception error) { result.completeExceptionally(error); }
                 });
                 return result;
@@ -100,7 +114,7 @@ public final class BuildLifecycleService implements Disposable {
             @Override public void onCancel() { batch.cancel(); }
         }.queue());
         batch.start();
-        return true;
+        return batch;
     }
 
     public void cancel() { BuildBatch batch = active; if (batch != null) batch.cancel(); }

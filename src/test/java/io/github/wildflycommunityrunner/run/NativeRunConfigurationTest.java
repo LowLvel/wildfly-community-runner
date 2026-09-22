@@ -18,6 +18,23 @@ import org.jdom.output.XMLOutputter;
 import static org.junit.Assert.assertThrows;
 
 public class NativeRunConfigurationTest extends BasePlatformTestCase {
+    public void testApplicationSelectionRoundTripResolvesPortablePathsAndRejectsMissingServices() throws Exception {
+        var settings = WildFlyProjectSettings.getInstance(getProject());
+        var before = settings.getState();
+        try {
+            var service = io.github.wildflycommunityrunner.model.ServiceProfile.create();
+            service.name = "orders"; service.buildFilePath = "orders/pom.xml";
+            settings.update(state -> state.services.add(service));
+            var configuration = configuration(false);
+            configuration.setServicePaths(java.util.List.of("orders/pom.xml"));
+            var element = new Element("configuration"); configuration.writeExternal(element);
+            var restored = configuration(false); restored.readExternal(element);
+            assertEquals(java.util.List.of("orders/pom.xml"), restored.getServicePaths());
+            assertEquals(service.id, restored.resolveServices().getFirst().id);
+            settings.update(state -> state.services.clear());
+            assertThrows(RuntimeConfigurationError.class, restored::checkConfiguration);
+        } finally { settings.loadState(before); }
+    }
     private WildFlyApplicationSettings.StateData previous;
     private String previousSelection;
     private ServerProfile server;

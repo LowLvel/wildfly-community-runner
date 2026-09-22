@@ -31,7 +31,7 @@ public final class WildFlyPaths {
     }
 
     public static Path deploymentsDir(ServerProfile profile) {
-        return standaloneDir(profile).resolve("deployments");
+        return io.github.wildflycommunityrunner.services.ScannerConfiguration.directory(profile);
     }
 
     public static Path logFile(ServerProfile profile) {

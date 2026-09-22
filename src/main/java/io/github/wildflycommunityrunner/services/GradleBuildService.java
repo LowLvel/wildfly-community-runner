@@ -61,7 +61,7 @@ public final class GradleBuildService {
                 output.accept("No Gradle wrapper found above " + moduleDir + "; falling back to system Gradle.");
             }
 
-            String tasks = service.buildTasks == null || service.buildTasks.isBlank() ? "clean build" : service.buildTasks;
+            String tasks = service.buildTasks == null || service.buildTasks.isBlank() ? "build" : service.buildTasks;
             command.addAll(ParametersListUtil.parse(tasks));
             if (service.buildArguments != null && !service.buildArguments.isBlank()) {
                 command.addAll(ParametersListUtil.parse(service.buildArguments));
@@ -86,6 +86,8 @@ public final class GradleBuildService {
             GeneralCommandLine commandLine = new GeneralCommandLine(command)
                     .withWorkingDirectory(moduleDir)
                     .withCharset(StandardCharsets.UTF_8);
+            if (service.buildJavaHome != null && !service.buildJavaHome.isBlank())
+                commandLine.withEnvironment("JAVA_HOME", service.buildJavaHome.trim());
             if (launcherOptions != null) {
                 String inherited = System.getenv("GRADLE_OPTS");
                 commandLine.withEnvironment("GRADLE_OPTS", ((inherited == null ? "" : inherited) + " " + launcherOptions.options()).trim());
