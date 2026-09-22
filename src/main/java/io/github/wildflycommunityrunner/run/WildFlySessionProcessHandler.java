@@ -80,11 +80,11 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
             } catch (Exception e) {
                 Launch current;
                 synchronized (this) { current = launch; }
-                if (current != null && current.ownsProcess()) current.handler().destroyProcess();
                 if (!isProcessTerminated()) {
                     notifyTextAvailable("Cannot start WildFly: " + SensitiveProperties.redactProperties(e.getMessage()) + "\n", ProcessOutputTypes.STDERR);
                     finish(1);
                 }
+                if (current != null && current.ownsProcess()) current.handler().destroyProcess();
             }
         });
     }

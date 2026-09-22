@@ -131,4 +131,19 @@ public class BuildBatchTest extends BasePlatformTestCase {
         assertEquals(2, h.releases);
         assertEquals(BuildOperation.Outcome.CANCELLED, active.completion().join().outcome());
     }
+
+    public void testSharedRootBuildRunsOnceAndDeploysBothApplicationsUnderSuppression() {
+        var h = new Harness();
+        var a = ServiceProfile.create(); a.name = "orders"; a.buildRootPath = "pom.xml";
+        var b = ServiceProfile.create(); b.name = "billing"; b.buildRootPath = "pom.xml";
+        var batch = new BuildBatch(List.of(a, b), new ServerProfile(), BuildBatch.Mode.FORCE_DEPLOY, false, h, h.queue::add, ignored -> {});
+        batch.start(); h.drain();
+        assertEquals(2, h.leases);
+        h.exit(0); h.deploys.getFirst().complete(true); h.drain();
+        assertEquals(1, h.builds.size()); assertEquals(2, h.deploys.size());
+        assertEquals(2, h.leases);
+        h.deploys.getLast().complete(true); h.drain();
+        assertEquals(BuildOperation.Outcome.SUCCESS, batch.completion().join().outcome());
+        assertEquals(0, h.leases); assertEquals(2, h.releases);
+    }
 }

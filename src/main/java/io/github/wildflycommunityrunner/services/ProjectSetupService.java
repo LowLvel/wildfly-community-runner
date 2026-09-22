@@ -127,7 +127,7 @@ public final class ProjectSetupService implements Disposable {
                 for (var choice : choices) if (suggestedApplication(choice)) state.services.add(discoveredService(choice));
             state.onboardingCompleted = true;
         });
-        for (ServiceProfile service : settings.services()) app.rememberService(service);
+        for (ServiceProfile service : settings.services()) app.rememberService(BuildService.sourceSnapshot(project, service));
         reconcileServerSelection();
     }
 

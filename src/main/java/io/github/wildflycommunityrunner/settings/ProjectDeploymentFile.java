@@ -48,9 +48,12 @@ public final class ProjectDeploymentFile {
             result.add(service);
         }
         DeploymentNames.requireUnique(result);
+        requireDistinctBuildFiles(project, result);
         return result;
     }
     public static void write(Path project, List<ServiceProfile> services) throws Exception {
+        DeploymentNames.requireUnique(services);
+        requireDistinctBuildFiles(project, services);
         StringBuilder xml = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<wildfly-services version=\"1\">\n");
         for (var service : services) {
             validate(service);
@@ -93,6 +96,13 @@ public final class ProjectDeploymentFile {
     }
     private static boolean samePath(Path root, String a, String b) {
         return root.resolve(a).toAbsolutePath().normalize().equals(root.resolve(b).toAbsolutePath().normalize());
+    }
+    private static void requireDistinctBuildFiles(Path root, List<ServiceProfile> services) {
+        Set<String> files = new HashSet<>();
+        for (var service : services) {
+            if (!files.add(relative(root, service.buildFilePath)))
+                throw new IllegalArgumentException("Shared services must have distinct build files: " + service.buildFilePath);
+        }
     }
     private static void validate(ServiceProfile service) {
         if (service.name == null || service.name.isBlank()) throw new IllegalArgumentException("Shared service name is required.");

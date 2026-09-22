@@ -511,9 +511,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
 
     private JPopupMenu projectContextMenu() {
         JPopupMenu menu = new JPopupMenu();
-        JMenuItem build = new JMenuItem("Build Only", AllIcons.Actions.Compile);
         JMenuItem buildDeploy = new JMenuItem("Build and Deploy");
-        JMenuItem buildOnly = new JMenuItem("Build Only");
+        JMenuItem buildOnly = new JMenuItem("Build Only", AllIcons.Actions.Compile);
         JMenuItem redeploy = new JMenuItem("Redeploy", AllIcons.Actions.Restart);
         JMenuItem undeploy = new JMenuItem("Undeploy", AllIcons.Actions.Cancel);
         JMenuItem browser = new JMenuItem("Open in Browser", AllIcons.Actions.Forward);
@@ -526,7 +525,6 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         menu.add(buildDeploy); menu.add(buildOnly); menu.add(redeploy); menu.add(undeploy); menu.add(browser);
         menu.addSeparator(); menu.add(autoOn); menu.add(autoOff); menu.add(edit);
         menu.addSeparator(); menu.add(module); menu.add(artifact); menu.add(remove);
-        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.BUILD_ONLY)));
         buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.FORCE_DEPLOY)));
         buildOnly.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.BUILD_ONLY)));
         redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
@@ -792,7 +790,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         source.deploymentName = external.deploymentName();
         ServerProfile server = requireServer();
         if (server == null) return;
-        WildFlyApplicationSettings.getInstance().rememberDeployment(server, external.deploymentName(), source);
+        WildFlyApplicationSettings.getInstance().rememberDeployment(server, external.deploymentName(), io.github.wildflycommunityrunner.services.BuildService.sourceSnapshot(project, source));
         refreshExternalDeployments();
         append("Remembered source for external deployment " + external.deploymentName() + ": " + source.buildFilePath);
     }
@@ -835,6 +833,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
                 if (disposed || project.isDisposed()) return;
+                io.github.wildflycommunityrunner.services.ScannerConfiguration.requireEnabled(server);
                 WildFlyApplicationSettings app = WildFlyApplicationSettings.getInstance();
                 List<ExternalDeployment> rows = new ArrayList<>();
                 Map<String, DeploymentStatusView> statuses = new HashMap<>();
@@ -877,14 +876,24 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 throw cancelled;
             } catch (Exception error) {
                 append("Deployment status refresh failed: " + PluginNotifications.message(error));
+                onUi(() -> {
+                    if (!sameServerLocation(selectedServer(), server)) return;
+                    var unknown = new HashMap<String, DeploymentStatusView>();
+                    localNames.forEach(name -> unknown.put(name, new DeploymentStatusView("UNKNOWN", null)));
+                    externalDeployments.forEach(row -> unknown.put(row.deploymentName(), new DeploymentStatusView("UNKNOWN", null)));
+                    deploymentStatuses = Map.copyOf(unknown); statusServerId = server.id;
+                    serviceTableModel.fireTableDataChanged();
+                });
             } finally { externalRefreshRunning = false; }
         });
     }
 
     private static boolean sameServerLocation(ServerProfile a, ServerProfile b) {
-        return Objects.equals(a.id, b.id) && Objects.equals(a.home, b.home)
+        return a != null && b != null && Objects.equals(a.id, b.id) && Objects.equals(a.home, b.home)
                 && Objects.equals(a.configuration, b.configuration) && Objects.equals(a.host, b.host)
-                && a.httpPort == b.httpPort && a.debugPort == b.debugPort;
+                && a.httpPort == b.httpPort && a.debugPort == b.debugPort
+                && Objects.equals(a.startupArguments, b.startupArguments) && Objects.equals(a.jvmOptions, b.jvmOptions)
+                && Objects.equals(a.scannerName, b.scannerName);
     }
 
     private void buildSelected(BuildBatch.Mode mode) {
@@ -950,7 +959,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
 
     private void deployService(ServiceProfile service, ServerProfile server, Runnable completion) {
         ServerProfile serverSnapshot = new ServerProfile(server);
-        ServiceProfile source = new ServiceProfile(service);
+        ServiceProfile source = io.github.wildflycommunityrunner.services.BuildService.sourceSnapshot(project, service);
         background("Deployment failed", () -> {
             Path artifact = ArtifactLocator.resolve(project, source);
             String name = ArtifactLocator.effectiveDeploymentName(source, artifact);
@@ -1390,7 +1399,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private void rememberService(ServiceProfile service) {
-        WildFlyApplicationSettings.getInstance().rememberService(service);
+        WildFlyApplicationSettings.getInstance().rememberService(io.github.wildflycommunityrunner.services.BuildService.sourceSnapshot(project, service));
     }
 
     private static ServiceProfile serviceDraftForExternal(String deploymentName) {

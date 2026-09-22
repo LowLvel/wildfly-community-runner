@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Selected applications in native Local Server Run/Debug: start/reuse, wait for
+  the expected HTTP endpoint, build, and deploy with cancellation and ownership.
+- Explicit Build and Deploy / Build Only actions; new services use incremental
+  build goals, tests enabled, and Auto Redeploy off. Existing settings survive.
+- Explicit shared root builds, per-service build JDKs, deterministic artifact
+  selection, and duplicate deployment-name validation.
+- Optional versioned `.wildfly/services.xml` for portable project definitions;
+  JDK paths, JVM options, Auto choices, and server installations stay local.
+- Server-scoped source associations; scanner configuration/path validation,
+  configurable timeouts, stopped/unknown status, full browser URLs, and IPv6.
+- Focused application discovery and collapsed advanced JVM-option helpers.
+
 ## 0.6.0 — release candidate
 
 This release retains the 0.5.2 Maven/Gradle and multi-service workflows while adding

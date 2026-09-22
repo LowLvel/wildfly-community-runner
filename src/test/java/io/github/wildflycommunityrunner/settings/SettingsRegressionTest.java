@@ -7,6 +7,23 @@ import java.nio.file.Path;
 import static org.junit.Assert.*;
 
 public class SettingsRegressionTest {
+    @Test public void deploymentSourcesRequireExplicitServerScopedAssociationAndFollowRelink() {
+        var settings = new WildFlyApplicationSettings();
+        var serverA = new io.github.wildflycommunityrunner.model.ServerProfile(); serverA.home = java.nio.file.Path.of("server-a").toAbsolutePath().toString();
+        var serverB = new io.github.wildflycommunityrunner.model.ServerProfile(); serverB.home = java.nio.file.Path.of("server-b").toAbsolutePath().toString();
+        var a = ServiceProfile.create(); a.name = "orders"; a.buildFilePath = "orders/pom.xml"; a.deploymentName = "api.war";
+        var b = ServiceProfile.create(); b.name = "billing"; b.buildFilePath = "billing/pom.xml"; b.deploymentName = "api.war";
+        settings.rememberService(a); settings.rememberService(b);
+        assertNull(settings.findDeploymentSource(serverA, "api.war"));
+        settings.rememberDeployment(serverA, "api.war", a); settings.rememberDeployment(serverB, "api.war", b);
+        assertEquals("orders", settings.findDeploymentSource(serverA, "api.war").name);
+        assertEquals("billing", settings.findDeploymentSource(serverB, "api.war").name);
+        a.buildFilePath = "moved/pom.xml"; settings.replaceKnownService(a.id, a);
+        assertEquals("moved/pom.xml", settings.findDeploymentSource(serverA, "api.war").buildFilePath);
+        settings.forgetServices(java.util.Set.of(a.id));
+        assertNull(settings.findDeploymentSource(serverA, "api.war"));
+        assertNotNull(settings.findDeploymentSource(serverB, "api.war"));
+    }
     @Test public void migratesLegacyMavenConfigurationWithoutLosingValues() {
         var service = new ServiceProfile();
         service.pomPath = "apps/api/pom.xml";

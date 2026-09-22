@@ -63,6 +63,9 @@ public class ManagerPanelTest extends BasePlatformTestCase {
             projectSettings.loadState(new WildFlyProjectSettings.StateData());
             var server = new ServerProfile();
             server.home = temporary.getRoot().getAbsolutePath();
+            Path configuration = Path.of(server.home, "standalone/configuration/standalone.xml");
+            Files.createDirectories(configuration.getParent());
+            Files.writeString(configuration, "<server><deployment-scanner path='deployments' relative-to='jboss.server.base.dir'/></server>");
             app.update(state -> state.servers.add(server));
             projectSettings.update(state -> state.selectedServerId = server.id);
             var service = new ServiceProfile();
@@ -79,15 +82,15 @@ public class ManagerPanelTest extends BasePlatformTestCase {
             JTable table = findServiceTable(created.get());
             assertNotNull(table);
             long deadline = System.nanoTime() + java.time.Duration.ofSeconds(10).toNanos();
-            while (!status(table).getText().contains("Deployed") && System.nanoTime() < deadline) {
+            while (!status(table).getText().contains("Server stopped") && System.nanoTime() < deadline) {
                 Thread.sleep(10);
                 PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
             }
-            assertEquals("● Deployed", status(table).getText());
+            assertEquals("○ Server stopped", status(table).getText());
             assertTrue(status(table).getToolTipText().startsWith("Deployed: "));
             Files.delete(marker);
             // Painting reads the last immutable snapshot, not the filesystem on EDT.
-            assertEquals("● Deployed", status(table).getText());
+            assertEquals("○ Server stopped", status(table).getText());
         } finally {
             if (created.get() != null) Disposer.dispose(created.get());
             app.loadState(previousApp);

@@ -11,6 +11,15 @@ import java.util.function.Consumer;
 public final class BuildService {
     private BuildService() {}
 
+    /** Global source associations must never resolve relative paths against a different IDE project. */
+    public static ServiceProfile sourceSnapshot(Project project, ServiceProfile service) {
+        ServiceProfile source = new ServiceProfile(service);
+        Path base = Path.of(project.getBasePath() == null ? "." : project.getBasePath()).toAbsolutePath().normalize();
+        if (source.buildFilePath != null && !source.buildFilePath.isBlank()) source.buildFilePath = base.resolve(source.buildFilePath).normalize().toString();
+        if (source.buildRootPath != null && !source.buildRootPath.isBlank()) source.buildRootPath = base.resolve(source.buildRootPath).normalize().toString();
+        return source;
+    }
+
     public static BuildOperation build(Project project, ServiceProfile service, Consumer<String> output) {
         ServiceProfile snapshot = new ServiceProfile(service);
         var operation = new BuildOperation(command -> ApplicationManager.getApplication().executeOnPooledThread(command));

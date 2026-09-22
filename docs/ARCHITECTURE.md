@@ -29,7 +29,10 @@ service's wrapper (searched in ancestor directories), then system Gradle.
 
 `BuildService` routes to the Maven or Gradle implementation. Discovery combines
 imported modules with a bounded recursive filesystem scan. `ArtifactLocator`
-resolves a configured override or a final WAR/EAR/JAR in the output directory.
+resolves a configured override or one unambiguous final WAR/EAR/JAR in the output
+directory, rejecting multiple candidates and excluding auxiliary archives.
+`ScannerConfiguration` reads the named scanner, paths, and enabled state from
+local XML using `SafeXml`; unresolved expressions fail closed for deployments.
 `DeploymentScannerService` copies artifacts via temporary files and coordinates
 WildFly scanner markers. `DebugAttachService` uses the Java remote debugger.
 
@@ -41,15 +44,18 @@ PID and creation time are checked before a process can be stopped.
 
 `BuildLifecycleService` owns one cancellable batch per project. `BuildBatch`
 snapshots the selection, sequences build/deploy completion, and holds watcher
-suppression through deployment. `BuildOperation` owns exactly one build process,
+suppression for all selected sources through the entire batch. Identical explicit
+root-build configurations are executed once; artifact lookup remains module-local. `BuildOperation` owns exactly one build process,
 including late process creation after cancellation. Maven subscribes to public
 execution events filtered by the exact environment before `startNotify`, with
 callbacks and exit-code checks as fallbacks. Native progress and the tool window
 both cancel the same operation. Closing a tool window does not own the batch.
 
 The `run` package registers native Local Server and Attach Debugger configuration
-factories. Configurations persist a global server-profile ID, keeping JVM options
-out of shared run-configuration XML. Standard Java Run/Debug runners bind an
+factories. Configurations persist a global server-profile ID/name and selected
+project-relative application build files, keeping JVM options out of shared XML.
+`ApplicationLaunch` waits for the expected endpoint, then owns one cancellable
+build/deploy batch. An empty selection retains server-only behavior. Standard Java Run/Debug runners bind an
 asynchronous session handler to the global process service. Stop owns only a
 process started by that session; observing or detaching another project's server
 does not kill it. The disposable project session service detaches listeners on
@@ -83,8 +89,8 @@ Reference: [IntelliJ threading model](https://plugins.jetbrains.com/docs/intelli
 
 Maven and Gradle; nested discovery; multi-selection; artifact-only Auto Redeploy;
 separate external deployments; global source/server awareness; Start, Debug,
-Attach, Stop; the four deployment states and deployment-time hover; browser
-context overrides; configuration/home/deployment/server-log shortcuts; multiple
+Attach, Stop; scanner status qualified by server state and deployment-time hover;
+browser context and URL overrides; configuration/home/deployment/server-log shortcuts; multiple
 profiles; configurable debug ports; Oracle TNS and JVM helpers. There is no
 per-service log feature.
 
@@ -96,6 +102,16 @@ copies; UI tables render a stable snapshot and retain selected IDs across refres
 `SettingsMigration` performs only pure normalization, clears transferred obsolete
 fields, repairs missing/duplicate IDs and invalid loaded ports, and records the
 schema version. Loading settings does not access files or the credential store.
+
+`ProjectDeploymentFile` is the optional versioned, portable service definition.
+Only whitelisted nonlocal fields are written; paths remain inside the project.
+Import merges by build file while preserving IDs, JDKs, JVM options, and Auto
+choices. `ServiceProfile.create()` supplies new defaults; constructor defaults
+remain compatible with old XML that omitted default-valued fields.
+
+Source bindings use server home/base/configuration plus exact deployment name;
+remembered source names alone cannot authorize an association. Relative project
+paths become absolute in the application registry to avoid cross-project lookup.
 
 Global server and source change events are separate. `ProjectSetupService`
 reconciles selected servers and reconfigures artifact watches when server profiles

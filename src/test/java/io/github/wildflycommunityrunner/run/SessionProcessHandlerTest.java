@@ -14,6 +14,33 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class SessionProcessHandlerTest extends BasePlatformTestCase {
+    public void testApplicationPreparationFailureStopsOnlyOwnedServerAndReportsFailure() {
+        for (boolean owns : new boolean[]{true, false}) {
+            var process = new FakeProcess();
+            if (!owns) process.startNotify();
+            var session = new WildFlySessionProcessHandler(() -> new WildFlySessionProcessHandler.Launch(process, owns), Runnable::run,
+                    (cancelled, output) -> { throw new IllegalStateException("Build failed"); });
+            session.begin();
+            assertEquals(Integer.valueOf(1), session.getExitCode());
+            assertEquals(owns ? 1 : 0, process.stopCount);
+            if (!owns) process.exit(0);
+        }
+    }
+
+    public void testDetachingCancelsApplicationPreparationWithoutStoppingSharedServer() {
+        var process = new FakeProcess();
+        var reference = new AtomicReference<WildFlySessionProcessHandler>();
+        var session = new WildFlySessionProcessHandler(() -> new WildFlySessionProcessHandler.Launch(process, true), Runnable::run,
+                (cancelled, output) -> {
+                    assertFalse(cancelled.getAsBoolean());
+                    reference.get().detachProcess();
+                    assertTrue(cancelled.getAsBoolean());
+                });
+        reference.set(session);
+        session.begin();
+        assertEquals(0, process.stopCount);
+        process.exit(0);
+    }
     private static final class FakeProcess extends ProcessHandler {
         int stopCount;
         @Override protected void destroyProcessImpl() { stopCount++; notifyProcessTerminated(0); }

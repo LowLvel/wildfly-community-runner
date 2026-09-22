@@ -63,7 +63,7 @@ public final class BuildLifecycleService implements Disposable {
         var watcher = ArtifactAutoDeployService.getInstance(project);
         var backend = new BuildBatch.Backend() {
             @Override public BuildOperation build(ServiceProfile service) {
-                WildFlyApplicationSettings.getInstance().rememberService(service);
+                WildFlyApplicationSettings.getInstance().rememberService(BuildService.sourceSnapshot(project, service));
                 return BuildService.build(project, service, output);
             }
             @Override public CompletableFuture<Boolean> deploy(ServiceProfile service, ServerProfile target) {
@@ -72,7 +72,7 @@ public final class BuildLifecycleService implements Disposable {
                     try {
                         if (disposed || project.isDisposed()) { result.complete(false); return; }
                         var artifact = ArtifactLocator.resolve(project, service);
-                        var source = new ServiceProfile(service);
+                        var source = BuildService.sourceSnapshot(project, service);
                         source.deploymentName = ArtifactLocator.effectiveDeploymentName(source, artifact);
                         WildFlyApplicationSettings.getInstance().rememberService(source);
                         DeploymentScannerService.deploy(project, target, artifact, source.deploymentName, output, ok -> {

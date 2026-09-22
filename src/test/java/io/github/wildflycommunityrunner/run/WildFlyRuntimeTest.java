@@ -1,6 +1,7 @@
 package io.github.wildflycommunityrunner.run;
 
 import com.intellij.execution.ExecutionResult;
+import com.intellij.execution.ExecutionManager;
 import com.intellij.execution.configurations.ConfigurationTypeUtil;
 import com.intellij.execution.configurations.RemoteState;
 import com.intellij.execution.executors.DefaultDebugExecutor;
@@ -48,6 +49,8 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
         Path root = temporary.getRoot().toPath(), base = root.resolve("server-base");
         var watcher = ArtifactAutoDeployService.getInstance(getProject());
         var processes = WildFlyProcessService.getInstance();
+        var contentManager = ExecutionManager.getInstance(getProject()).getContentManager();
+        var originalDescriptors = List.copyOf(contentManager.getAllDescriptors());
         try {
             background(() -> {
                 Path configuration = base.resolve("configuration"); Files.createDirectories(configuration);
@@ -110,14 +113,20 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             Path artifact = module.resolve("target/smoke.war");
             var service = new ServiceProfile(); service.name = "Runtime WAR"; service.deploymentName = "smoke.war";
             service.buildFilePath = module.resolve("pom.xml").toString(); service.artifactPath = artifact.toString();
+            service.buildTasks = "validate"; service.buildArguments = "-q -o";
+            service.buildJavaHome = System.getProperty("java.home");
             background(() -> {
-                Files.createDirectories(module); Files.writeString(module.resolve("pom.xml"), "<project/>");
+                Files.createDirectories(module); Files.writeString(module.resolve("pom.xml"), """
+                        <project xmlns="http://maven.apache.org/POM/4.0.0">
+                          <modelVersion>4.0.0</modelVersion><groupId>fixture</groupId>
+                          <artifactId>smoke</artifactId><version>1</version><packaging>pom</packaging>
+                        </project>
+                        """);
                 war(artifact, "first"); return null;
             });
-            var deployed = new CompletableFuture<Boolean>();
-            DeploymentScannerService.deploy(getProject(), server, artifact, service.deploymentName, output::add, deployed::complete);
-            await(deployed::isDone, Duration.ofSeconds(90), diagnostic("Initial deployment timed out"));
-            assertTrue(diagnostic("Initial deployment failed"), deployed.get());
+            // Exercise the Run/Debug application pipeline with a real native Maven build and scanner.
+            background(() -> { ApplicationLaunch.deploy(getProject(), server, List.of(service), () -> false, output::add); return null; });
+            assertNotNull(settings.findDeploymentSource(server, service.deploymentName));
             waitHttp(server, "/smoke/", "first:credential-ok");
             assertEquals("DEPLOYED", background(() -> DeploymentScannerService.status(server, "smoke.war")));
             var timestamp = background(() -> DeploymentScannerService.lastDeployedAt(server, "smoke.war"));
@@ -145,6 +154,17 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             await(debug::isProcessTerminated, Duration.ofSeconds(30), "Debug owner Stop did not finish");
             background(() -> { waitStopped(server); return null; });
         } finally {
+            getProject().getService(BuildLifecycleService.class).cancel();
+            for (var descriptor : List.copyOf(contentManager.getAllDescriptors())) {
+                if (originalDescriptors.contains(descriptor)) continue;
+                var handler = descriptor.getProcessHandler();
+                if (handler != null && !handler.isProcessTerminated()) {
+                    handler.destroyProcess();
+                    await(handler::isProcessTerminated, Duration.ofSeconds(30), "Application build cleanup timed out");
+                }
+                contentManager.removeRunContent(DefaultRunExecutor.getRunExecutorInstance(), descriptor);
+                if (!Disposer.isDisposed(descriptor)) Disposer.dispose(descriptor);
+            }
             background(() -> { watcher.configure(List.of(), server, output::add); processes.terminate(server, output::add); return null; });
             for (ExecutionResult session : sessions) {
                 ProcessHandler handler = session.getProcessHandler();
