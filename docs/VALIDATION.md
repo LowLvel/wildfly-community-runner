@@ -87,7 +87,9 @@ place outside the read action on background threads. This public API supports th
 2025.1 baseline. The native execution code no longer uses `ProcessAdapter` or the
 deprecated `ConfigurationException.getMessage()` method.
 
-Onboarding uses the public `ProjectActivity` entry point and
-`com.intellij.ide.trustedProjects.TrustedProjects.isProjectTrusted`. Its trust-change
-listener is public but marked experimental in the 2025.1 baseline; the verifier
-matrix covers that listener on every declared IDE release line.
+Onboarding uses the public `ProjectActivity` entry point. `ProjectTrust` uses the
+public `com.intellij.ide.impl.TrustedProjects.isTrusted` compatibility facade:
+the replacement `Project` overload did not exist in the initial 2025.1 release.
+The facade is experimental on the baseline and deprecated on later releases;
+it is not an internal API. Its trust-change listener is also public experimental.
+The verifier matrix covers both on every declared IDE release line.

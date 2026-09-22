@@ -1,7 +1,7 @@
 package io.github.wildflycommunityrunner.services;
 
 import com.intellij.openapi.Disposable;
-import com.intellij.ide.trustedProjects.TrustedProjects;
+import io.github.wildflycommunityrunner.util.ProjectTrust;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.project.Project;
 import io.github.wildflycommunityrunner.model.BuildSystem;
@@ -249,7 +249,7 @@ public final class ArtifactAutoDeployService implements Disposable {
 
     private void checkAndDeploy(String serviceId) {
         pending.remove(serviceId);
-        if (project.isDisposed() || !TrustedProjects.isProjectTrusted(project) || suppressed.contains(serviceId) || inFlight.contains(serviceId)) return;
+        if (project.isDisposed() || !ProjectTrust.isTrusted(project) || suppressed.contains(serviceId) || inFlight.contains(serviceId)) return;
         ServiceProfile service = currentService(serviceId);
         ServerProfile server = configuredServer == null ? null : new ServerProfile(configuredServer);
         if (service == null || !service.deployAfterBuild || server == null) return;

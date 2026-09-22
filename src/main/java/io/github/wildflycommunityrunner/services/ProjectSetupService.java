@@ -1,6 +1,6 @@
 package io.github.wildflycommunityrunner.services;
 
-import com.intellij.ide.trustedProjects.TrustedProjects;
+import io.github.wildflycommunityrunner.util.ProjectTrust;
 import com.intellij.ide.trustedProjects.TrustedProjectsListener;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
@@ -60,7 +60,7 @@ public final class ProjectSetupService implements Disposable {
     }
 
     private void initialize() {
-        if (disposed || project.isDisposed() || !TrustedProjects.isProjectTrusted(project)) return;
+        if (disposed || project.isDisposed() || !ProjectTrust.isTrusted(project)) return;
         if (initialization != null && !initialization.isDone()) return;
         var settings = WildFlyProjectSettings.getInstance(project);
         settings.migrateLegacyService();
@@ -73,7 +73,7 @@ public final class ProjectSetupService implements Disposable {
                 ServerProfile candidate = findHome ? environmentProfile(System.getenv()) : null;
                 var choices = discover ? BuildProjectDiscoveryService.discover(project) : List.<BuildProjectDiscoveryService.BuildProjectChoice>of();
                 IdeUi.later(project, () -> disposed, () -> {
-                    if (!TrustedProjects.isProjectTrusted(project)) return;
+                    if (!ProjectTrust.isTrusted(project)) return;
                     try {
                         applyInitialState(candidate, choices);
                         configureWatcher(null);
@@ -143,7 +143,7 @@ public final class ProjectSetupService implements Disposable {
     public void configureWatcher(Consumer<String> output) {
         if (disposed || project.isDisposed()) return;
         var state = WildFlyProjectSettings.getInstance(project).getState();
-        boolean trusted = TrustedProjects.isProjectTrusted(project);
+        boolean trusted = ProjectTrust.isTrusted(project);
         List<ServiceProfile> services = trusted ? state.services.stream().map(ServiceProfile::new).toList() : List.of();
         ServerProfile server = WildFlyApplicationSettings.getInstance().servers().stream()
                 .filter(s -> s.id.equals(state.selectedServerId)).findFirst().map(ServerProfile::new).orElse(null);
