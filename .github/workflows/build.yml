@@ -1,0 +1,164 @@
+name: Build and verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: '1'
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      ides: ${{ steps.ides.outputs.ides }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: ides
+        name: Read pinned compatibility matrix
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          properties = dict(line.split('=', 1) for line in Path('gradle.properties').read_text().splitlines()
+                            if line.strip() and not line.lstrip().startswith('#'))
+          ides = [value.strip() for value in properties['pluginVerifierIdeVersions'].split(',')]
+          if not ides or len(ides) != len(set(ides)):
+              raise SystemExit('IDE matrix must be nonempty and unique')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('ides=' + json.dumps(ides) + '\n')
+          PY
+
+  build:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Prepare checksum-pinned WildFly runtime fixture
+        shell: bash
+        run: python3 scripts/prepare_wildfly.py
+      - name: Compile, test, validate, and package
+        shell: bash
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_*.py'
+          python3 scripts/ci_gradle.py verifyPluginProjectConfiguration test buildPlugin verifyPluginStructure
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: |
+            build/reports/tests/
+            build/test-results/
+          if-no-files-found: error
+      - name: Require executed regression tests
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path('build/test-results/test').glob('TEST-*.xml'))
+          executed = sum(int(ET.parse(p).getroot().get('tests', 0)) - int(ET.parse(p).getroot().get('skipped', 0)) for p in reports)
+          if executed == 0:
+              raise SystemExit('No regression tests executed')
+          print(f'{executed} regression tests executed')
+          for required in ('WildFlyRuntimeTest', 'NativeMavenRuntimeTest'):
+              report = next((ET.parse(p).getroot() for p in reports if p.stem.endswith('.' + required)), None)
+              if report is None or int(report.get('tests', 0)) < 1 or int(report.get('skipped', 0)):
+                  raise SystemExit(f'Required runtime fixture did not execute: {required}')
+          PY
+      - name: Upload candidate plugin
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-candidate
+          path: build/distributions/*.zip
+          if-no-files-found: error
+      - name: Upload rendered documentation screenshots
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: marketplace-screenshots
+          path: build/reports/screenshots/*.png
+          if-no-files-found: error
+      - name: Validate the unsigned release candidate
+        if: matrix.os == 'ubuntu-latest'
+        run: python3 scripts/release_manifest.py --candidate-directory build/distributions --commit "$GITHUB_SHA"
+      - name: Exercise signing with a disposable CI certificate
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          umask 077
+          openssl req -x509 -newkey rsa:3072 -nodes -days 1 \
+            -subj '/CN=WildFly Runner CI signing fixture' \
+            -keyout "$RUNNER_TEMP/ci-signing.key" -out "$RUNNER_TEMP/ci-signing.crt"
+          export PRIVATE_KEY_FILE="$RUNNER_TEMP/ci-signing.key"
+          export CERTIFICATE_CHAIN_FILE="$RUNNER_TEMP/ci-signing.crt"
+          python3 scripts/ci_gradle.py signPlugin verifyPluginSignature -PreleaseArchive="$CANDIDATE_ARCHIVE" --no-build-cache --no-configuration-cache
+          python3 scripts/release_manifest.py --commit "$GITHUB_SHA"
+          test -n "$(find build/release -name '*-signed.zip' -print -quit)"
+          rm -- "$PRIVATE_KEY_FILE" "$CERTIFICATE_CHAIN_FILE"
+
+  verify:
+    name: Plugin Verifier (${{ matrix.ide }})
+    needs: [matrix, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ide: ${{ fromJSON(needs.matrix.outputs.ides) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Verify pinned IDE compatibility
+        env:
+          VERIFIER_IDE: ${{ matrix.ide }}
+        run: python3 scripts/ci_gradle.py verifyPlugin -PverifierIde="$VERIFIER_IDE"
+      - name: Upload verifier reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: verifier-${{ matrix.ide }}
+          path: build/reports/pluginVerifier/
+          if-no-files-found: error
+
+  validation:
+    name: Validation gate
+    if: always()
+    needs: [matrix, build, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every matrix job to pass
+        env:
+          MATRIX_RESULT: ${{ needs.matrix.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: |
+          test "$MATRIX_RESULT" = success
+          test "$BUILD_RESULT" = success
+          test "$VERIFY_RESULT" = success
