@@ -114,6 +114,29 @@ public class ArtifactWatcherIntegrationTest extends BasePlatformTestCase {
         assertTrue(ArtifactAutoDeployService.towardOutput(module, module.resolve("build/libs"), Path.of("build")));
     }
 
+    public void testWrappedWatchKeysAndForeignRelativePathsUseRegisteredFilesystemIdentity() throws Exception {
+        Path module = root.resolve("project");
+        var registered = wrapper(module);
+        var delivered = wrapper(module);
+        assertNotSame(registered, delivered);
+        var registrations = java.util.Map.of(ArtifactAutoDeployService.watchablePath(registered), "output");
+        assertEquals("output", registrations.get(ArtifactAutoDeployService.watchablePath(delivered)));
+        Path zip = archive(root, "foreign.zip", "fixture");
+        try (var filesystem = java.nio.file.FileSystems.newFileSystem(zip)) {
+            assertTrue(ArtifactAutoDeployService.towardOutput(module, module.resolve("target"), filesystem.getPath("target")));
+            assertFalse(ArtifactAutoDeployService.towardOutput(module, module.resolve("target"), filesystem.getPath("src")));
+        }
+    }
+    private static java.nio.file.WatchKey wrapper(Path path) {
+        return new java.nio.file.WatchKey() {
+            @Override public boolean isValid() { return true; }
+            @Override public List<java.nio.file.WatchEvent<?>> pollEvents() { return List.of(); }
+            @Override public boolean reset() { return true; }
+            @Override public void cancel() {}
+            @Override public java.nio.file.Watchable watchable() { return path; }
+        };
+    }
+
     public void testReconfigurationExpiresAutomaticRequestWaitingBehindManualDeployment() throws Exception {
         var entered = new java.util.concurrent.CountDownLatch(1);
         var release = new java.util.concurrent.CountDownLatch(1);

@@ -98,11 +98,13 @@ public final class ArtifactAutoDeployService implements Disposable {
             for (Slot slot : slots.values()) {
                 for (WatchTarget target : targets(slot)) grouped.computeIfAbsent(target.watched(), ignored -> new ArrayList<>()).add(target);
             }
-            Map<WatchKey, List<WatchTarget>> registrations = new HashMap<>();
+            Map<Path, List<WatchTarget>> registrations = new HashMap<>();
             for (var entry : grouped.entrySet()) {
                 WatchKey key = entry.getKey().register(ws, StandardWatchEventKinds.ENTRY_CREATE,
                         StandardWatchEventKinds.ENTRY_MODIFY, StandardWatchEventKinds.ENTRY_DELETE);
-                registrations.put(key, entry.getValue());
+                // Some IDE filesystem providers return a new key wrapper from every take().
+                // Associate events by the public watched path, retaining all aliases of one registration.
+                registrations.computeIfAbsent(watchablePath(key), ignored -> new ArrayList<>()).addAll(entry.getValue());
             }
             watchService = ws;
             registrationFailures = 0;
@@ -140,16 +142,17 @@ public final class ArtifactAutoDeployService implements Disposable {
         return new WatchTarget(slot, desired, watched, exact);
     }
 
-    private void watchLoop(WatchService ws, Map<WatchKey, List<WatchTarget>> registrations, long expected) {
+    private void watchLoop(WatchService ws, Map<Path, List<WatchTarget>> registrations, long expected) {
         try {
             while (!disposed && !project.isDisposed() && expected == generation && watchService == ws) {
                 WatchKey key = ws.take();
+                Path watchedPath = watchablePath(key);
                 boolean refresh = false;
                 for (WatchEvent<?> event : key.pollEvents()) {
                     Path relative = event.context() instanceof Path path ? path : null;
                     lastEvent = event.kind().name() + " " + event.context() + " ("
                             + (event.context() == null ? "null" : event.context().getClass().getName()) + ") on " + key.watchable();
-                    for (WatchTarget target : registrations.getOrDefault(key, List.of())) {
+                    for (WatchTarget target : registrations.getOrDefault(watchedPath, List.of())) {
                         if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
                             schedule(target.slot(), DEBOUNCE_MS, true); refresh = true;
                         } else if (!target.watched().equals(target.desired())) {
@@ -162,7 +165,7 @@ public final class ArtifactAutoDeployService implements Disposable {
                         }
                     }
                 }
-                if (!key.reset()) { registrations.remove(key); refresh = true; }
+                if (!key.reset()) { registrations.remove(watchedPath); refresh = true; }
                 if (refresh) scheduleRestart(expected);
                 if (registrations.isEmpty()) return;
             }
@@ -172,7 +175,13 @@ public final class ArtifactAutoDeployService implements Disposable {
 
     static boolean towardOutput(Path watched, Path desired, Path relative) {
         Path route = watched.relativize(desired);
-        return relative != null && route.getNameCount() > 0 && relative.getName(0).equals(route.getName(0));
+        return relative != null && route.getNameCount() > 0
+                && watched.resolve(relative.getName(0).toString()).equals(watched.resolve(route.getName(0).toString()));
+    }
+    static Path watchablePath(WatchKey key) {
+        if (!(key.watchable() instanceof Path path)) throw new IllegalArgumentException("Watch registration has no filesystem path");
+        // Rebase through the default provider; key.watchable() can expose its unwrapped delegate path.
+        return Path.of(path.toString()).toAbsolutePath().normalize();
     }
     static boolean relevant(ServiceProfile service, String exact, Path relative) {
         if (relative == null) return false;
