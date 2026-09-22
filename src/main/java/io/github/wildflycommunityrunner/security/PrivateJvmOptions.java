@@ -2,7 +2,10 @@ package io.github.wildflycommunityrunner.security;
 
 import com.intellij.util.execution.ParametersListUtil;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.nio.charset.Charset;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.*;
@@ -26,13 +29,14 @@ public final class PrivateJvmOptions implements AutoCloseable {
         if (protectedArgs.isEmpty()) return new PrivateJvmOptions(original, null, null, new SecretRedactor(values));
         StringBuilder content = new StringBuilder();
         for (String argument : protectedArgs) content.append(quote(argument)).append('\n');
+        byte[] encoded = encode(content.toString(), launcherCharset());
         Path directory = Files.createTempDirectory(temporaryRoot, "wildfly-jvm-");
         Path file = directory.resolve("options.args");
         try {
             restrict(directory, true);
             Files.createFile(file);
             restrict(file, false);
-            Files.writeString(file, content, StandardCharsets.UTF_8);
+            Files.write(file, encoded);
             List<String> arguments = new ArrayList<>(visible);
             arguments.add("@" + file);
             return new PrivateJvmOptions(ParametersListUtil.join(arguments), directory, file, new SecretRedactor(values));
@@ -40,6 +44,27 @@ public final class PrivateJvmOptions implements AutoCloseable {
             Files.deleteIfExists(file); Files.deleteIfExists(directory);
             throw new IOException("Cannot create a private JVM argument file. Check temporary-directory permissions.");
         }
+    }
+
+    // Java's native launcher uses the OS encoding, including the Windows ANSI code page.
+    static Charset launcherCharset() {
+        return Charset.forName(System.getProperty("native.encoding", Charset.defaultCharset().name()));
+    }
+
+    static byte[] encode(String content, Charset charset) throws IOException {
+        try {
+            ByteBuffer bytes = charset.newEncoder().encode(CharBuffer.wrap(content));
+            byte[] encoded = new byte[bytes.remaining()]; bytes.get(encoded); return encoded;
+        } catch (CharacterCodingException error) {
+            throw new IOException("A sensitive JVM property contains characters unavailable in the system launcher encoding ("
+                    + charset.name() + "). Use a UTF-8 system locale or a credential file supported by the application.");
+        }
+    }
+
+    static PrivateJvmOptions gradleLauncher(PrivateJvmOptions daemon, Path temporaryRoot) throws IOException {
+        // Avoid nested quotes passing through cmd.exe: the Gradle client reads the
+        // org.gradle.jvmargs property from its own Java argument file.
+        return create("", List.of(), List.of("-Dorg.gradle.jvmargs=" + daemon.options()), List.of(), temporaryRoot);
     }
 
     private PrivateJvmOptions(String options, Path directory, Path file, SecretRedactor redactor) {

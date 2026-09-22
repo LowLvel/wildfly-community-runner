@@ -48,8 +48,10 @@ public final class JvmSecrets implements Disposable {
     public final class Protection implements AutoCloseable {
         private final List<String> created = new ArrayList<>();
         private boolean committed;
-        public String protect(String options) {
+        private boolean closed;
+        public synchronized String protect(String options) {
             backgroundOnly();
+            if (closed) throw new IllegalStateException("The credential save was cancelled.");
             if (options == null || !SensitiveProperties.containsSensitive(options)) return options == null ? "" : options;
             SensitiveProperties.validateQuoting(options);
             List<String> arguments = new ArrayList<>(ParametersListUtil.parse(options));
@@ -74,9 +76,13 @@ public final class JvmSecrets implements Disposable {
             }
             return ParametersListUtil.join(arguments);
         }
-        public synchronized void commit() { committed = true; }
+        public synchronized void commit() {
+            if (closed && !committed) throw new IllegalStateException("The credential save was cancelled.");
+            committed = true;
+        }
         public void rollbackAsync() { JvmSecrets.this.rollback(this); }
         @Override public synchronized void close() {
+            closed = true;
             if (committed) return;
             for (String id : created) try { store.set(id, null); } catch (RuntimeException ignored) { }
             created.clear();
@@ -109,6 +115,15 @@ public final class JvmSecrets implements Disposable {
             protectedArgs.add(argument.substring(0, equals + 1) + value);
         }
         PrivateJvmOptions prepared = PrivateJvmOptions.create(original, visible, protectedArgs, values);
+        return track(prepared);
+    }
+
+    public PrivateJvmOptions prepareGradleLauncher(PrivateJvmOptions daemon) throws IOException {
+        backgroundOnly();
+        return track(PrivateJvmOptions.gradleLauncher(daemon, java.nio.file.Path.of(System.getProperty("java.io.tmpdir"))));
+    }
+
+    private PrivateJvmOptions track(PrivateJvmOptions prepared) {
         active.add(prepared);
         if (disposed) { prepared.close(); active.remove(prepared); throw new IllegalStateException("WildFly integration has been disposed."); }
         return prepared;

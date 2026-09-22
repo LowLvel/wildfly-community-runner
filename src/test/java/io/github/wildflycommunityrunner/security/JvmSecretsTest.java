@@ -142,6 +142,16 @@ public class JvmSecretsTest {
         } finally { secrets.dispose(); }
     }
 
+    @Test public void cancelledCredentialTransactionsCannotCreateOrCommitLateReferences() {
+        var store = new MemoryStore(); var secrets = new JvmSecrets(store);
+        try {
+            var protection = secrets.protection(); protection.close();
+            assertThrows(IllegalStateException.class, () -> protection.protect("-Dpassword=late"));
+            assertThrows(IllegalStateException.class, protection::commit);
+            assertTrue(store.values.isEmpty());
+        } finally { secrets.dispose(); }
+    }
+
     private static java.nio.file.attribute.UserPrincipal aclOwner(java.nio.file.attribute.AclFileAttributeView acl) {
         try { return acl.getOwner(); } catch (java.io.IOException error) { throw new AssertionError(error); }
     }

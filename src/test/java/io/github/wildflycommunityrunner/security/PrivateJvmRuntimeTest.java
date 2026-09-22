@@ -21,7 +21,7 @@ public class PrivateJvmRuntimeTest {
 
     @Test public void realJvmReadsPrivateArgumentsWithSpacesUnicodeQuotesAndBackslashes() throws Exception {
         Path root = temporary.newFolder("private path with spaces").toPath();
-        String value = "synthetic ü日本語 \"quotes\" C:\\folder\\tail # @ $ =\nsecond line";
+        String value = "synthetic " + (PrivateJvmOptions.launcherCharset().newEncoder().canEncode("ü日本語") ? "ü日本語" : (PrivateJvmOptions.launcherCharset().newEncoder().canEncode("ü") ? "ü" : "ASCII")) + " \"quotes\" C:\\folder\\tail # @ $ =\nsecond line";
         var options = PrivateJvmOptions.create("", List.of("-Dordinary=visible"), List.of("-Dwildfly.test.password=" + value), List.of(value), root);
         Path file = options.file();
         try (options) {
@@ -31,7 +31,7 @@ public class PrivateJvmRuntimeTest {
             command.addAll(ParametersListUtil.parse(options.options()));
             command.add("-jar"); command.add(jar.toString());
             assertFalse(command.toString().contains(value));
-            run(command, root, value, 30);
+            run(command, root, value, 30, null);
         }
         assertFalse(Files.exists(file));
     }
@@ -44,22 +44,34 @@ public class PrivateJvmRuntimeTest {
                 + "throw new GradleException('The private JVM property was not delivered') } }\n");
         String home = System.getProperty("wildfly.test.gradleHome");
         assertNotNull("Run this integration test with the repository Gradle wrapper", home);
-        String value = "synthetic-Gradle ü value with spaces";
-        try (var options = PrivateJvmOptions.create("", List.of(), List.of("-Dwildfly.test.password=" + value), List.of(value), root)) {
+        String value = "synthetic-Gradle value with spaces";
+        try (var options = PrivateJvmOptions.create("", List.of(), List.of("-Dwildfly.test.password=" + value), List.of(value), root);
+             var launcher = PrivateJvmOptions.gradleLauncher(options, root)) {
             var command = new ArrayList<String>();
             if (windows()) { command.add("cmd.exe"); command.add("/d"); command.add("/c"); }
             command.add(Path.of(home, "bin", windows() ? "gradle.bat" : "gradle").toString());
-            command.addAll(List.of("--offline", "--no-daemon", "--console=plain", "-Dorg.gradle.jvmargs=" + options.options(), "verifySecret"));
+            command.addAll(List.of("--offline", "--no-daemon", "--console=plain", "verifySecret"));
             assertFalse(command.toString().contains(value));
-            run(command, root, value, 120);
+            run(command, root, value, 120, launcher.options());
         }
     }
 
-    private void run(List<String> command, Path directory, String expected, long timeout) throws Exception {
+    @Test public void unrepresentableCharactersFailWithoutSubstitutionOrSecretInTheError() throws Exception {
+        String value = "synthetic日本語";
+        var error = assertThrows(java.io.IOException.class,
+                () -> PrivateJvmOptions.encode(value, java.nio.charset.StandardCharsets.US_ASCII));
+        assertFalse(error.getMessage().contains(value));
+        assertTrue(error.getMessage().contains("UTF-8"));
+        assertArrayEquals(value.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                PrivateJvmOptions.encode(value, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    private void run(List<String> command, Path directory, String expected, long timeout, String launcherOptions) throws Exception {
         Path log = directory.resolve("process-output.txt");
         var builder = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
         builder.environment().put("EXPECTED_TEST_SECRET", expected);
         builder.environment().put("GRADLE_USER_HOME", directory.resolve("gradle-user-home").toString());
+        if (launcherOptions != null) builder.environment().put("JAVA_OPTS", launcherOptions);
         Process process = builder.start();
         try {
             assertTrue("Child JVM timed out", process.waitFor(timeout, TimeUnit.SECONDS));

@@ -110,9 +110,14 @@ replacing them, so concurrent user edits win. `PendingSecrets` rolls back a dial
 save if it is cancelled or changed before its application-queue callback runs.
 
 `PrivateJvmOptions` secures its directory and file before writing JVM properties,
-preserves nonsensitive options, and escapes Java argument-file syntax. The platform
-Maven runner receives only the public option string; Gradle gets the same string
-through `org.gradle.jvmargs` with a single-use daemon. WildFly keeps nonsensitive
+preserves nonsensitive options, and escapes Java argument-file syntax. A reporting
+native-charset encoder rejects values that the system launcher cannot represent.
+The public `RunConfigurationExtension` refreshes Maven arguments for each execution;
+`MavenSecretSessions` binds cleanup to the unique file path in the process command,
+which also supports concurrent reruns without changing serialized settings. Pending
+files from launches without a handler are released at project disposal. Gradle gets
+`org.gradle.jvmargs` through a second client argument file passed in `JAVA_OPTS`,
+avoiding nested cmd.exe quoting, and uses a single-use daemon. WildFly keeps nonsensitive
 server identity properties visible to its launcher and the process detector.
 Process cleanup holds the already-created credential service instead of looking
 up services during container disposal. `SecretRedactor.Lines` buffers bounded

@@ -234,9 +234,18 @@ options. Use double quotes for values containing spaces.
 WildFly and build JVM options resolve on background threads into temporary Java
 argument files restricted to the filesystem owner. Secret values stay out of the
 plugin's saved profiles, generated Maven run configuration VM options, and launch
-command arguments. Files are released after the process exits or the plugin unloads.
+command arguments. Maven Rerun creates a fresh file for each execution; saved native
+Maven configurations retain credential references. Files are released after the
+process exits or the plugin unloads. A native Maven launch that fails before supplying
+a process handler releases its pending file when the project closes. Sensitive JVM
+options use the standard local Maven runner; the experimental `maven.use.scripts`
+runner and remote execution targets are outside this feature's scope.
 Gradle builds using secrets run with `--no-daemon`. Java argument-file support
-requires Java 9 or newer; runtime fixtures use Java 21. Ordinary options are unchanged.
+requires Java 9 or newer; runtime fixtures use Java 21. Argument files use the system
+launcher encoding (the Windows ANSI code page on a non-UTF-8 Windows installation).
+Unsupported characters produce an error before launch, without replacing characters
+in the credential. Use a UTF-8 system locale or the application's credential-file
+support in that case. Ordinary options are unchanged.
 
 Keep sensitive properties in **JVM options**. Sensitive values in build arguments,
 build tasks/goals, or WildFly startup arguments are rejected with an explanation;

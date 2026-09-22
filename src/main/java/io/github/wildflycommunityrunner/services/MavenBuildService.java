@@ -10,7 +10,8 @@ import io.github.wildflycommunityrunner.util.ProjectTrust;
 import com.intellij.util.execution.ParametersListUtil;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
 import io.github.wildflycommunityrunner.security.JvmSecrets;
-import io.github.wildflycommunityrunner.security.PrivateJvmOptions;
+import io.github.wildflycommunityrunner.security.SensitiveProperties;
+import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
 import org.jetbrains.idea.maven.execution.MavenRunConfigurationType;
@@ -48,11 +49,13 @@ public final class MavenBuildService {
                 ApplicationManager.getApplication().executeOnPooledThread(() -> {
                     try {
                         JvmSecrets secrets = JvmSecrets.getInstance();
-                        PrivateJvmOptions prepared = secrets.prepare((inherited + " " + options).trim());
-                        operation.onFinished(() -> secrets.release(prepared));
-                        settings.setVmOptions(prepared.options());
-                        IdeUi.later(project, modality, () -> operation.completion().isDone(),
-                                () -> launch(project, service, operation, output, parameters, settings, goals));
+                        JvmSecrets.Protection protection = secrets.protection();
+                        operation.onFinished(protection::rollbackAsync);
+                        try {
+                            settings.setVmOptions(protection.protect((inherited + " " + options).trim()));
+                            IdeUi.later(project, modality, () -> operation.completion().isDone(),
+                                    () -> launch(project, service, operation, output, parameters, settings, goals, protection));
+                        } catch (Exception failure) { protection.rollbackAsync(); throw failure; }
                     } catch (ProcessCanceledException cancelled) {
                         operation.failed(cancelled); throw cancelled;
                     } catch (Exception failure) { operation.failed(failure); }
@@ -65,9 +68,11 @@ public final class MavenBuildService {
     }
 
     private static void launch(Project project, ServiceProfile service, BuildOperation operation, Consumer<String> output,
-                               MavenRunnerParameters parameters, MavenRunnerSettings settings, List<String> goals) {
+                               MavenRunnerParameters parameters, MavenRunnerSettings settings, List<String> goals, JvmSecrets.Protection protection) {
         try {
             if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
+            if (SensitiveProperties.containsSensitive(settings.getVmOptions()) && Registry.is("maven.use.scripts", false))
+                throw new IllegalStateException("Sensitive JVM options require IntelliJ's standard Maven runner. Disable the experimental maven.use.scripts registry option.");
             var configuration = MavenRunConfigurationType.createRunnerAndConfigurationSettings(
                     null, settings, parameters, project, "WildFly build: " + service.name, false);
             var callback = new ProgramRunner.Callback() {
@@ -84,6 +89,7 @@ public final class MavenBuildService {
                     com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance(), configuration).build(callback);
             new BuildExecutionListener(project, environment, operation);
             if (!operation.beginLaunch()) return;
+            protection.commit();
             output.accept("Building " + service.name + " — Maven " + String.join(" ", goals));
             environment.getRunner().execute(environment);
         } catch (ProcessCanceledException cancelled) {

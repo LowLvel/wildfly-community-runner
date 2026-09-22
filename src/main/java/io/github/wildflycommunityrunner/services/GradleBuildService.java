@@ -51,6 +51,7 @@ public final class GradleBuildService {
             List<String> command = new ArrayList<>();
             if (windows) {
                 command.add("cmd.exe");
+                command.add("/d");
                 command.add("/c");
                 command.add(wrapper != null ? wrapper.toString() : "gradle");
             } else {
@@ -68,15 +69,21 @@ public final class GradleBuildService {
             var secrets = JvmSecrets.getInstance();
             var options = secrets.prepare(service.buildJvmOptions);
             operation.onFinished(() -> secrets.release(options));
-            if (!options.options().isBlank()) command.add("-Dorg.gradle.jvmargs=" + options.options());
+            var launcherOptions = options.containsSecrets() ? secrets.prepareGradleLauncher(options) : null;
+            operation.onFinished(() -> secrets.release(launcherOptions));
+            if (launcherOptions == null && !options.options().isBlank()) command.add("-Dorg.gradle.jvmargs=" + options.options());
             if (options.containsSecrets()) command.add("--no-daemon");
 
-            int taskStart = windows ? 3 : 1;
+            int taskStart = windows ? 4 : 1;
             output.accept("Building " + service.name + " — Gradle " + String.join(" ", command.subList(taskStart, command.size())));
 
             GeneralCommandLine commandLine = new GeneralCommandLine(command)
                     .withWorkingDirectory(moduleDir)
                     .withCharset(StandardCharsets.UTF_8);
+            if (launcherOptions != null) {
+                String inherited = System.getenv("JAVA_OPTS");
+                commandLine.withEnvironment("JAVA_OPTS", ((inherited == null ? "" : inherited) + " " + launcherOptions.options()).trim());
+            }
             if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
             if (!operation.beginLaunch()) return;
             KillableProcessHandler handler = new KillableProcessHandler(commandLine);
