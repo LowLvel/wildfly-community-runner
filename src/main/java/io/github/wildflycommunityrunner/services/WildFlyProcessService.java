@@ -119,6 +119,13 @@ public final class WildFlyProcessService implements com.intellij.openapi.Disposa
         catch (IllegalArgumentException error) { return null; }
     }
 
+    /** Redacts a complete log line using only the currently managed execution's values. */
+    public String redact(ServerProfile profile, String text) {
+        ManagedProcess current = managed(profile);
+        SecretRedactor redactor = current == null ? null : current.handler().getUserData(SecretRedactor.PROCESS);
+        return redactor == null ? SensitiveProperties.redactProperties(text) : redactor.redact(text);
+    }
+
     public boolean isRunning(ServerProfile profile) {
         ManagedProcess process = managed(profile);
         return process != null && !process.handler().isProcessTerminated() && !process.handler().isProcessTerminating();

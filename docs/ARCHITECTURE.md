@@ -123,3 +123,18 @@ server identity properties visible to its launcher and the process detector.
 Process cleanup holds the already-created credential service instead of looking
 up services during container disposal. `SecretRedactor.Lines` buffers bounded
 stdout/stderr lines so a secret split across process output chunks is not exposed.
+
+## Server log viewer
+
+`ServerLogTailer` owns a bounded byte cursor, UTF-8 decoder, partial-line buffer, and
+redacted text tail on one worker. Each poll opens and closes its channel. File
+identity, size, prefix and cursor-anchor checks recover from rotation and
+truncate/regrow operations. Metadata is checked again before consuming a read.
+The incomplete line survives Clear View so its redaction context cannot be lost.
+
+`ServerLogPanel` owns the read worker for its tool-window lifetime. Reads occur only
+while the tab is visible, with pause and explicit reload controls. Profile and view
+revisions expire queued callbacks after selection changes, clearing, pausing, hiding,
+or disposal. Swing rendering and filtering use cached strings; the editor action
+crosses `IdeUi` before entering platform APIs. The manager's application-wide server
+selection remains the source of the log path; no service-specific log model exists.

@@ -91,6 +91,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private final JLabel selectionLabel = new JLabel("No service selected");
 
     private final JTextArea output = new JTextArea();
+    private final JTabbedPane tabs = new JTabbedPane();
+    private final ServerLogPanel serverLog;
     private final Timer refreshTimer;
     private List<BuildProjectChoice> buildChoices = List.of();
     private List<ExternalDeployment> externalDeployments = List.of();
@@ -110,6 +112,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     public WildFlyManagerPanel(Project project) {
         super(new BorderLayout());
         this.project = project;
+        serverLog = new ServerLogPanel(project, this::openInEditor);
+        com.intellij.openapi.util.Disposer.register(this, serverLog);
         WeakReference<WildFlyManagerPanel> weakPanel = new WeakReference<>(this);
         activityOutput = message -> {
             WildFlyManagerPanel panel = weakPanel.get();
@@ -141,12 +145,14 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     @Override
     public void addNotify() {
         super.addNotify();
+        serverLog.setActive(tabs.getSelectedComponent() == serverLog);
         if (!disposed && !project.isDisposed() && !refreshTimer.isRunning()) refreshTimer.start();
     }
 
     @Override
     public void removeNotify() {
         refreshTimer.stop();
+        serverLog.setActive(false);
         super.removeNotify();
     }
 
@@ -171,7 +177,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         JPanel logActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 3, 0));
         JButton openServerLog = new JButton("server.log");
         JButton clear = new JButton("Clear");
-        openServerLog.addActionListener(e -> onUi(() -> openLog()));
+        openServerLog.addActionListener(e -> onUi(() -> tabs.setSelectedComponent(serverLog)));
         clear.addActionListener(e -> onUi(() -> output.setText("")));
         logActions.add(openServerLog);
         logActions.add(clear);
@@ -183,9 +189,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         logsTab.add(logToolbar, BorderLayout.NORTH);
         logsTab.add(new JScrollPane(output), BorderLayout.CENTER);
 
-        JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Services", servicesTab);
-        tabs.addTab("Logs", logsTab);
+        tabs.addTab("Activity", logsTab);
+        tabs.addTab("server.log", serverLog);
+        tabs.addChangeListener(event -> serverLog.setActive(isShowing() && tabs.getSelectedComponent() == serverLog));
         add(tabs, BorderLayout.CENTER);
     }
 
@@ -603,6 +610,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         selectServerById(WildFlyProjectSettings.getInstance(project).getState().selectedServerId);
         refreshServiceTablePreservingSelection();
         loading = false;
+        serverLog.setProfile(selectedServer());
         syncAutoDeployWatcher();
         refreshBuildChoices(true);
         refreshExternalDeployments();
@@ -1307,6 +1315,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         String id = server == null ? "" : server.id;
         updateProject(state -> state.selectedServerId = id);
         WildFlyApplicationSettings.getInstance().setLastServerId(id);
+        serverLog.setProfile(server);
     }
 
     private void syncAutoDeployWatcher() {

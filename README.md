@@ -23,10 +23,11 @@ changes in the final WAR/EAR/JAR output.
 
 ## UI
 
-The **WildFly** tool window has two tabs:
+The **WildFly** tool window has three tabs:
 
 - **Services** — server controls, project services, external WildFly deployments, and contextual service actions.
-- **Logs** — Maven/Gradle output, deployment activity, WildFly process output, and a `server.log` shortcut.
+- **Activity** — Maven/Gradle output, deployment activity, WildFly process output, and a `server.log` shortcut.
+- **server.log** — a live, bounded viewer for the selected server profile's log.
 
 Server controls are deliberately compact: Start, Debug, Stop, and a chevron menu. The menu contains debugger attach, server-profile management, `standalone.xml`, WildFly Home, deployments, and `server.log`.
 
@@ -261,3 +262,25 @@ and sensitive `-D` assignments; applications and third-party Maven/build logging
 remain responsible for their own output. Stop and relaunch through the plugin after
 unloading/reloading it before requesting a server restart that needs its private
 argument file.
+
+### Server log viewer
+
+The **server.log** tab reads the selected profile's log in the background while the
+tab is visible. It follows rotation, truncation, and delayed file creation, with no
+open file handle between polls. Reads are bounded to the latest 256 KiB when
+catching up, and the view retains at most 200,000 characters.
+
+- **Pause** freezes the view; resuming catches up with the latest bounded tail.
+- **Follow** scrolls to arriving lines. Turn it off to keep your reading position.
+- **Filter text** matches complete lines literally, ignoring case.
+- **Clear View** clears displayed lines without modifying the log file.
+- **Reload Tail** rereads the current tail, including while paused.
+- **Open in Editor** preserves access to the full file and the IDE's encoding tools.
+
+The viewer decodes UTF-8 incrementally and waits for complete lines before showing
+them. Lines longer than 65,536 characters are omitted. Invalid UTF-8 bytes display
+as replacement characters; use the editor for logs in another encoding. Rotation
+adds a separator while preserving the bounded recent history. Known values from
+the active managed server and sensitive `-D` assignments are redacted; this does
+not sanitize the underlying file or replace an application's logging policy.
+There is no per-service log feature.
