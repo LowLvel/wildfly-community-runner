@@ -1,6 +1,7 @@
 package io.github.wildflycommunityrunner.services;
 
 import com.intellij.openapi.Disposable;
+import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.project.Project;
 import io.github.wildflycommunityrunner.model.BuildSystem;
@@ -62,6 +63,7 @@ public final class ArtifactAutoDeployService implements Disposable {
     private volatile WatchService watchService;
     private volatile int generation;
     private volatile ScheduledFuture<?> restartFuture;
+    private volatile boolean disposed;
 
     public ArtifactAutoDeployService(Project project) {
         this.project = project;
@@ -73,6 +75,7 @@ public final class ArtifactAutoDeployService implements Disposable {
 
     /** Reconcile watched services/server after UI or project settings change. */
     public synchronized void configure(List<ServiceProfile> services, ServerProfile server, Consumer<String> output) {
+        if (disposed || project.isDisposed()) return;
         List<ServiceProfile> copies = new ArrayList<>();
         if (services != null) {
             for (ServiceProfile service : services) {
@@ -109,7 +112,7 @@ public final class ArtifactAutoDeployService implements Disposable {
     private synchronized void restartWatcherLocked() {
         generation++;
         closeWatchService();
-        if (project.isDisposed() || configuredServices.isEmpty()) return;
+        if (disposed || project.isDisposed() || configuredServices.isEmpty()) return;
 
         final int localGeneration = generation;
         try {
@@ -246,7 +249,7 @@ public final class ArtifactAutoDeployService implements Disposable {
 
     private void checkAndDeploy(String serviceId) {
         pending.remove(serviceId);
-        if (project.isDisposed() || suppressed.contains(serviceId) || inFlight.contains(serviceId)) return;
+        if (project.isDisposed() || !TrustedProjects.isProjectTrusted(project) || suppressed.contains(serviceId) || inFlight.contains(serviceId)) return;
         ServiceProfile service = currentService(serviceId);
         ServerProfile server = configuredServer == null ? null : new ServerProfile(configuredServer);
         if (service == null || !service.deployAfterBuild || server == null) return;
@@ -326,6 +329,7 @@ public final class ArtifactAutoDeployService implements Disposable {
 
     @Override
     public synchronized void dispose() {
+        disposed = true;
         generation++;
         closeWatchService();
         if (restartFuture != null) restartFuture.cancel(false);

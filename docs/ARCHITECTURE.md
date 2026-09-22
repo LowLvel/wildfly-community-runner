@@ -9,6 +9,9 @@ service's wrapper (searched in ancestor directories), then system Gradle.
 - `WildFlyApplicationSettings` persists global server profiles, the last profile,
   and the source registry used by external deployments across projects.
 - `WildFlyProjectSettings` persists this project's service list and selections.
+- `ProjectSetupService` owns first-use discovery and serializes saved watcher
+  configuration independently of tool-window lifetime. `ProjectSetupActivity`
+  enters through the public project-startup API; Safe Mode blocks automatic work.
 - `WildFlyProcessService` owns the application-wide managed process registry and
   inspects externally running servers.
 - `ArtifactAutoDeployService` is a disposable project service with one blocking

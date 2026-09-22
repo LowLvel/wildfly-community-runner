@@ -4,6 +4,7 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.ValidationInfo;
 import io.github.wildflycommunityrunner.model.BuildSystem;
+import io.github.wildflycommunityrunner.model.BuildDefaults;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
 import io.github.wildflycommunityrunner.services.BuildProjectDiscoveryService.BuildProjectChoice;
 import io.github.wildflycommunityrunner.services.DeploymentScannerService;
@@ -35,6 +36,8 @@ public final class ServiceProfileDialog extends DialogWrapper {
     private final JTextField tasks = new JTextField(34);
     private final JTextField arguments = new JTextField(34);
     private final JTextField jvmOptions = new JTextField(34);
+    private BuildSystem displayedSystem;
+    private boolean updatingImportedProjects;
 
     public ServiceProfileDialog(Project project, ServiceProfile service, List<BuildProjectChoice> choices) {
         super(project, true);
@@ -79,7 +82,19 @@ public final class ServiceProfileDialog extends DialogWrapper {
         JLabel hint = new JLabel("Leave Artifact override empty to auto-detect target/ or build/libs/.");
         panel.add(hint, c);
 
-        buildSystem.addActionListener(e -> refreshImportedProjects());
+        buildSystem.addActionListener(e -> {
+            BuildSystem selected = (BuildSystem) buildSystem.getSelectedItem();
+            if (selected == null) return;
+            ServiceProfile fields = new ServiceProfile();
+            fields.buildSystem = displayedSystem.name();
+            fields.buildTasks = tasks.getText();
+            fields.buildArguments = arguments.getText();
+            BuildDefaults.changeSystem(fields, selected);
+            tasks.setText(fields.buildTasks);
+            arguments.setText(fields.buildArguments);
+            displayedSystem = selected;
+            refreshImportedProjects();
+        });
         importedProject.addActionListener(e -> applyImportedProject());
         return panel;
     }
@@ -107,6 +122,7 @@ public final class ServiceProfileDialog extends DialogWrapper {
     }
 
     private void loadFields() {
+        displayedSystem = working.buildSystemEnum();
         nameField.setText(Objects.toString(working.name, ""));
         buildSystem.setSelectedItem(working.buildSystemEnum());
         buildFile.setText(Objects.toString(working.buildFilePath, ""));
@@ -123,16 +139,20 @@ public final class ServiceProfileDialog extends DialogWrapper {
     }
 
     private void refreshImportedProjects() {
-        BuildSystem selected = (BuildSystem) buildSystem.getSelectedItem();
-        Object old = importedProject.getSelectedItem();
-        DefaultComboBoxModel<BuildProjectChoice> model = new DefaultComboBoxModel<>();
-        for (BuildProjectChoice choice : choices) {
-            if (selected == null || choice.system() == selected) model.addElement(choice);
-        }
-        importedProject.setModel(model);
-        importedProject.setSelectedItem(null);
-        if (old instanceof BuildProjectChoice oldChoice) selectImportedProject(oldChoice.buildFilePath());
-        else selectImportedProject(buildFile.getText());
+        if (updatingImportedProjects) return;
+        updatingImportedProjects = true;
+        try {
+            BuildSystem selected = (BuildSystem) buildSystem.getSelectedItem();
+            Object old = importedProject.getSelectedItem();
+            DefaultComboBoxModel<BuildProjectChoice> model = new DefaultComboBoxModel<>();
+            for (BuildProjectChoice choice : choices) {
+                if (selected == null || choice.system() == selected) model.addElement(choice);
+            }
+            importedProject.setModel(model);
+            importedProject.setSelectedItem(null);
+            if (old instanceof BuildProjectChoice oldChoice) selectImportedProject(oldChoice.buildFilePath());
+            else selectImportedProject(buildFile.getText());
+        } finally { updatingImportedProjects = false; }
     }
 
     private void selectImportedProject(String path) {
@@ -147,9 +167,10 @@ public final class ServiceProfileDialog extends DialogWrapper {
     }
 
     private void applyImportedProject() {
+        if (updatingImportedProjects) return;
         BuildProjectChoice choice = (BuildProjectChoice) importedProject.getSelectedItem();
         if (choice == null) return;
-        buildSystem.setSelectedItem(choice.system());
+        if (buildSystem.getSelectedItem() != choice.system()) buildSystem.setSelectedItem(choice.system());
         buildFile.setText(choice.buildFilePath());
         if (nameField.getText().isBlank() || "Service".equals(nameField.getText()) || "Custom service".equals(nameField.getText())) {
             nameField.setText(choice.name());

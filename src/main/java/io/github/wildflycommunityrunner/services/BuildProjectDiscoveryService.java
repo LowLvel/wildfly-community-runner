@@ -134,6 +134,7 @@ public final class BuildProjectDiscoveryService {
             Files.walkFileTree(root, Set.of(), MAX_SCAN_DEPTH, new SimpleFileVisitor<>() {
                 @Override
                 public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    if (Thread.currentThread().isInterrupted()) throw new ProcessCanceledException();
                     ProgressManager.checkCanceled();
                     if (!dir.equals(root)) {
                         Path fileName = dir.getFileName();

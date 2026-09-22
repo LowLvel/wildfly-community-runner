@@ -29,6 +29,7 @@ import io.github.wildflycommunityrunner.settings.WildFlyProjectSettings;
 import io.github.wildflycommunityrunner.util.ArtifactLocator;
 import io.github.wildflycommunityrunner.util.IdeUi;
 import io.github.wildflycommunityrunner.services.PluginNotifications;
+import io.github.wildflycommunityrunner.services.ProjectSetupService;
 import io.github.wildflycommunityrunner.services.WildFlyServerDetector;
 import io.github.wildflycommunityrunner.util.ServicePresentation;
 import io.github.wildflycommunityrunner.util.WildFlyPaths;
@@ -77,6 +78,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private final Project project;
     private final JComboBox<ServerProfile> serverCombo = new JComboBox<>();
     private final JLabel serverStateLabel = new JLabel(" ");
+    private final JPanel onboardingHint = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
 
     private final ServiceTableModel serviceTableModel = new ServiceTableModel();
     private final JTable serviceTable = new JTable(serviceTableModel);
@@ -95,8 +97,6 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private final StringBuilder pendingOutput = new StringBuilder();
     private boolean outputScheduled;
     private static final int MAX_ACTIVITY_CHARS = 200_000;
-    private final Object watcherConfigurationLock = new Object();
-    private volatile int watcherConfigurationGeneration;
     private Map<String, DeploymentStatusView> deploymentStatuses = Map.of();
     private String statusServerId = "";
     private boolean refreshingTable;
@@ -115,6 +115,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         buildUi();
         loadSettings();
+        project.getMessageBus().connect(this).subscribe(ProjectSetupService.CHANGED,
+                () -> onUi(this::refreshAfterSetup));
         refreshTimer = new Timer(2000, e -> {
             if (disposed || project.isDisposed()) {
                 ((Timer) e.getSource()).stop();
@@ -208,6 +210,11 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         JPanel toolbar = compactToolbar(start, debug, stop, more);
         row.add(toolbar, BorderLayout.EAST);
         panel.add(row, BorderLayout.CENTER);
+        onboardingHint.add(new JLabel("Choose your local WildFly installation to get started."));
+        JButton setup = new JButton("Add server…");
+        setup.addActionListener(e -> onUi(this::addServer));
+        onboardingHint.add(setup);
+        panel.add(onboardingHint, BorderLayout.SOUTH);
 
         serverCombo.addActionListener(e -> {
             if (loading) return;
@@ -540,7 +547,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         refreshServers();
         refreshBuildChoices(false);
         WildFlyProjectSettings.StateData state = projectState();
-        migrateOldSettingsIfNeeded(state);
+        WildFlyProjectSettings.getInstance(project).migrateLegacyService();
         for (ServiceProfile service : state.services) {
             service.migrateLegacyFields();
             rememberService(service);
@@ -556,27 +563,25 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         refreshServerState();
     }
 
-    private void migrateOldSettingsIfNeeded(WildFlyProjectSettings.StateData state) {
-        if (!state.services.isEmpty()) return;
-        if ((state.mavenWorkingDirectory == null || state.mavenWorkingDirectory.isBlank())
-                && (state.artifactPath == null || state.artifactPath.isBlank())) return;
-        ServiceProfile legacy = new ServiceProfile();
-        legacy.name = "Legacy service";
-        legacy.buildSystem = BuildSystem.MAVEN.name();
-        if (state.mavenWorkingDirectory != null && !state.mavenWorkingDirectory.isBlank()) {
-            legacy.buildFilePath = Path.of(state.mavenWorkingDirectory).resolve("pom.xml").toString();
-        }
-        legacy.artifactPath = state.artifactPath == null ? "" : state.artifactPath;
-        legacy.buildTasks = state.mavenGoals == null || state.mavenGoals.isBlank() ? "clean package" : state.mavenGoals;
-        state.services.add(legacy);
-    }
-
     private void refreshServers() {
         String selectedId = selectedServer() == null ? null : selectedServer().id;
         DefaultComboBoxModel<ServerProfile> model = new DefaultComboBoxModel<>();
         for (ServerProfile server : WildFlyApplicationSettings.getInstance().servers()) model.addElement(server);
         serverCombo.setModel(model);
+        onboardingHint.setVisible(model.getSize() == 0);
         if (selectedId != null) selectServerById(selectedId);
+    }
+
+    private void refreshAfterSetup() {
+        loading = true;
+        refreshServers();
+        selectServerById(projectState().selectedServerId);
+        refreshServiceTablePreservingSelection();
+        loading = false;
+        syncAutoDeployWatcher();
+        refreshBuildChoices(true);
+        refreshExternalDeployments();
+        refreshServerState();
     }
 
     private void selectInitialServer(String projectServerId) {
@@ -633,15 +638,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 int added = 0;
                 for (BuildProjectChoice choice : discovered) {
                     if (state.services.stream().anyMatch(s -> samePath(s.buildFilePath, choice.buildFilePath()))) continue;
-                    ServiceProfile service = new ServiceProfile();
-                    service.name = choice.name();
-                    service.buildSystem = choice.system().name();
-                    service.buildFilePath = choice.buildFilePath();
-                    service.packaging = normalizePackaging(choice.packaging());
-                    service.buildTasks = service.defaultTasks();
-                    service.buildArguments = choice.system() == BuildSystem.MAVEN ? "-DskipTests" : "-x test";
-                    service.deployAfterBuild = true;
-                    service.deploymentName = defaultDeploymentName(service);
+                    ServiceProfile service = ProjectSetupService.discoveredService(choice);
                     state.services.add(service);
                     rememberService(service);
                     added++;
@@ -1293,16 +1290,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
 
     private void syncAutoDeployWatcher() {
         if (loading || disposed || project.isDisposed()) return;
-        List<ServiceProfile> services = projectState().services.stream().map(ServiceProfile::new).toList();
-        ServerProfile selected = selectedServer();
-        ServerProfile server = selected == null ? null : new ServerProfile(selected);
-        int generation = ++watcherConfigurationGeneration;
-        background("Auto Redeploy setup failed", () -> {
-            synchronized (watcherConfigurationLock) {
-                if (generation != watcherConfigurationGeneration || disposed || project.isDisposed()) return;
-                ArtifactAutoDeployService.getInstance(project).configure(services, server, activityOutput);
-            }
-        });
+        project.getService(ProjectSetupService.class).configureWatcher(activityOutput);
     }
 
     private ServerProfile selectedServer() { return (ServerProfile) serverCombo.getSelectedItem(); }
@@ -1412,7 +1400,6 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
 
     @Override public void dispose() {
         disposed = true;
-        watcherConfigurationGeneration++;
         refreshTimer.stop();
         synchronized (pendingOutput) { pendingOutput.setLength(0); }
     }
