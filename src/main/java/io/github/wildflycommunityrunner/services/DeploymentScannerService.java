@@ -37,14 +37,17 @@ public final class DeploymentScannerService {
                               String deploymentName,
                               Consumer<String> output,
                               Consumer<Boolean> completion) {
-        deploy(project, profile, artifact, deploymentName, output, completion, null);
+        deploy(project, profile, artifact, deploymentName, output, completion, null, () -> true);
     }
 
     static void deploy(Project project, ServerProfile profile, Path artifact, String deploymentName,
-                       Consumer<String> output, Consumer<Boolean> completion, ArtifactFingerprint expected) {
+                       Consumer<String> output, Consumer<Boolean> completion, ArtifactFingerprint expected,
+                       java.util.function.BooleanSupplier applicable) {
         ServerProfile snapshot = new ServerProfile(profile);
         submitTarget(project, snapshot, deploymentName == null || deploymentName.isBlank() ? artifact.getFileName().toString() : deploymentName,
                 "Deployment failed", output, completion, () -> {
+            // A queued automatic request may have expired while another scanner operation held the target.
+            if (!applicable.getAsBoolean()) return false;
             boolean success = false;
             Path deployments = WildFlyPaths.deploymentsDir(snapshot);
             Files.createDirectories(deployments);

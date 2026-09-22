@@ -113,4 +113,23 @@ public class ArtifactWatcherIntegrationTest extends BasePlatformTestCase {
         assertFalse(ArtifactAutoDeployService.towardOutput(module, module.resolve("build/libs"), Path.of("src")));
         assertTrue(ArtifactAutoDeployService.towardOutput(module, module.resolve("build/libs"), Path.of("build")));
     }
+
+    public void testReconfigurationExpiresAutomaticRequestWaitingBehindManualDeployment() throws Exception {
+        var entered = new java.util.concurrent.CountDownLatch(1);
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var blocked = ApplicationManager.getApplication().executeOnPooledThread(() ->
+                DeploymentCoordinator.getInstance().withTarget(getProject(), target, () -> {
+                    entered.countDown(); return release.await(30, TimeUnit.SECONDS);
+                }));
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            archive(root, "project/target/api.war", "queued");
+            await(() -> output.stream().anyMatch(line -> line.startsWith("Artifact changed;")));
+            configure(List.of());
+            release.countDown(); blocked.get(5, TimeUnit.SECONDS);
+            Thread.sleep(1000);
+            assertFalse(Files.exists(request()));
+            assertFalse(Files.exists(target));
+        } finally { release.countDown(); blocked.get(5, TimeUnit.SECONDS); }
+    }
 }

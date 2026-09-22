@@ -240,7 +240,8 @@ public final class ArtifactAutoDeployService implements Disposable {
                         synchronized (ArtifactAutoDeployService.this) { if (current(slot)) slot.failed = ok ? null : fingerprint; }
                         owned.complete(ok);
                     } finally { finished(slot, false); }
-                }, fingerprint);
+                }, fingerprint, () -> current(slot) && ProjectTrust.isTrusted(project)
+                        && !coordinator.suppressed(slot.source, fingerprint));
                 async = true;
             }
         } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }

@@ -69,18 +69,25 @@ public final class DeploymentCoordinator implements Disposable {
         }
     }
 
-    synchronized Claim claim(Path target, ArtifactFingerprint fingerprint) throws IOException {
+    Claim claim(Path target, ArtifactFingerprint fingerprint) throws IOException {
         Path key = targetKey(target);
-        if (disposed) return new Claim(null, null, true);
-        var busy = flights.get(key);
-        if (busy != null) return new Claim(null, busy, false);
-        Success success = successes.get(key);
-        if (success != null && success.fingerprint().equals(fingerprint) && stillDeployed(key, success)) {
-            return new Claim(null, null, true);
+        Success success;
+        synchronized (this) {
+            if (disposed) return new Claim(null, null, true);
+            var busy = flights.get(key);
+            if (busy != null) return new Claim(null, busy, false);
+            success = successes.get(key);
         }
-        var completion = new CompletableFuture<Void>();
-        flights.put(key, completion);
-        return new Claim(new AutoLease(key, fingerprint, completion), null, false);
+        boolean unchanged = success != null && success.fingerprint().equals(fingerprint) && stillDeployed(key, success);
+        synchronized (this) {
+            if (disposed) return new Claim(null, null, true);
+            var busy = flights.get(key);
+            if (busy != null) return new Claim(null, busy, false);
+            if (unchanged && successes.get(key) == success) return new Claim(null, null, true);
+            var completion = new CompletableFuture<Void>();
+            flights.put(key, completion);
+            return new Claim(new AutoLease(key, fingerprint, completion), null, false);
+        }
     }
 
     private static boolean stillDeployed(Path target, Success success) {
@@ -104,13 +111,16 @@ public final class DeploymentCoordinator implements Disposable {
         }
         void complete(boolean success) {
             if (!closed.compareAndSet(false, true)) return;
+            Success observed = null;
+            if (success) {
+                try { observed = new Success(fingerprint, ArtifactFingerprint.stamp(target), ArtifactFingerprint.stamp(marker(target, ".deployed"))); }
+                catch (IOException ignored) { /* A concurrent manual operation may have replaced the markers. */ }
+            }
             synchronized (DeploymentCoordinator.this) {
-                if (success && !disposed) {
-                    try {
-                        successes.put(target, new Success(fingerprint, ArtifactFingerprint.stamp(target),
-                                ArtifactFingerprint.stamp(marker(target, ".deployed"))));
-                        while (successes.size() > 256) successes.remove(successes.keySet().iterator().next());
-                    } catch (IOException ignored) { successes.remove(target); }
+                if (!disposed) {
+                    if (observed != null) successes.put(target, observed);
+                    else successes.remove(target);
+                    while (successes.size() > 256) successes.remove(successes.keySet().iterator().next());
                 }
                 flights.remove(target, completion);
             }
