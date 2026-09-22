@@ -6,3 +6,4 @@ out/
 .DS_Store
 .intellijPlatform/
 __pycache__/
+/wildfly-community-runner*.zip

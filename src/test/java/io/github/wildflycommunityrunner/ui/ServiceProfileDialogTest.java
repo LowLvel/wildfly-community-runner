@@ -14,10 +14,12 @@ public class ServiceProfileDialogTest extends BasePlatformTestCase {
         var choice = new BuildProjectChoice("web", "web", BuildSystem.GRADLE, "web/build.gradle.kts", "war");
         var dialog = new ServiceProfileDialog(getProject(), new ServiceProfile(), List.of(choice));
         try {
-            JComboBox<?> systems = findCombo(dialog.getContentPane(), BuildSystem.class);
+            // The headless platform peer has no window content pane; inspect the real, cached editor component.
+            JComponent editor = dialog.createCenterPanel();
+            JComboBox<?> systems = findCombo(editor, BuildSystem.class);
             assertNotNull(systems);
             systems.setSelectedItem(BuildSystem.GRADLE);
-            JComboBox<?> projects = findCombo(dialog.getContentPane(), BuildProjectChoice.class);
+            JComboBox<?> projects = findCombo(editor, BuildProjectChoice.class);
             assertNotNull(projects);
             projects.setSelectedItem(choice);
             var result = dialog.getProfile();

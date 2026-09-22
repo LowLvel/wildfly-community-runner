@@ -38,6 +38,7 @@ public final class ServiceProfileDialog extends DialogWrapper {
     private final JTextField jvmOptions = new JTextField(34);
     private BuildSystem displayedSystem;
     private boolean updatingImportedProjects;
+    private JTabbedPane editor;
 
     public ServiceProfileDialog(Project project, ServiceProfile service, List<BuildProjectChoice> choices) {
         super(project, true);
@@ -56,10 +57,12 @@ public final class ServiceProfileDialog extends DialogWrapper {
 
     @Override
     protected @Nullable JComponent createCenterPanel() {
+        if (editor != null) return editor;
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Service", buildGeneralPanel());
         tabs.addTab("Build & JVM", buildBuildPanel());
         tabs.setPreferredSize(new Dimension(720, 390));
+        editor = tabs;
         return tabs;
     }
 
