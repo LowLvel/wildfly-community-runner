@@ -46,6 +46,7 @@ public final class ArtifactAutoDeployService implements Disposable {
     private volatile long generation;
     private volatile boolean disposed;
     private ScheduledFuture<?> restart;
+    private int registrationFailures;
 
     public ArtifactAutoDeployService(Project project) { this.project = project; }
     public static ArtifactAutoDeployService getInstance(Project project) { return project.getService(ArtifactAutoDeployService.class); }
@@ -102,13 +103,17 @@ public final class ArtifactAutoDeployService implements Disposable {
                 registrations.put(key, entry.getValue());
             }
             watchService = ws;
+            registrationFailures = 0;
             WatchService owned = ws;
             long current = generation;
             watcher.execute(() -> watchLoop(owned, registrations, current));
             if (rescan) for (Slot slot : slots.values()) schedule(slot, DEBOUNCE_MS, true);
         } catch (IOException error) {
             if (ws != null) try { ws.close(); } catch (IOException ignored) {}
-            out("Auto Redeploy could not register output directories: " + PluginNotifications.message(error));
+            if (registrationFailures++ == 0) {
+                out("Auto Redeploy is retrying output-directory registration: " + PluginNotifications.message(error));
+            }
+            scheduleRestart(generation, Math.min(30_000L, 1000L * registrationFailures));
         }
     }
 
@@ -178,11 +183,14 @@ public final class ArtifactAutoDeployService implements Disposable {
     }
 
     private synchronized void scheduleRestart(long expected) {
+        scheduleRestart(expected, 200);
+    }
+    private synchronized void scheduleRestart(long expected, long delay) {
         if (disposed || expected != generation) return;
         if (restart != null) restart.cancel(false);
         restart = scheduler.schedule(() -> {
             synchronized (ArtifactAutoDeployService.this) { if (!disposed && expected == generation) register(true); }
-        }, 200, TimeUnit.MILLISECONDS);
+        }, delay, TimeUnit.MILLISECONDS);
     }
     private synchronized boolean current(Slot slot) {
         return !disposed && !project.isDisposed() && slot.generation == generation && slots.get(slot.service.id) == slot;
