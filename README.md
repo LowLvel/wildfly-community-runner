@@ -119,14 +119,18 @@ Maven launch/document saving is dispatched through IntelliJ's application queue.
 
 ## Build
 
-Requirements: JDK 21 and Gradle 9+.
+Requirements: JDK 21. Gradle 9.0.0 is pinned by the included wrapper with a SHA-256 checksum.
 
 ```bash
-gradle verifyPluginProjectConfiguration
-gradle buildPlugin
+./gradlew verifyPluginProjectConfiguration test buildPlugin verifyPluginStructure
+./gradlew verifyPlugin
 ```
 
-The installable ZIP is generated under `build/distributions/`. The included GitHub Actions workflow builds and uploads it on pushes to `main`.
+Use `gradlew.bat` on Windows. The installable ZIP is generated under `build/distributions/`.
+GitHub Actions builds on Linux, Windows, and macOS and verifies the pinned IntelliJ
+release matrix on pull requests and pushes to `main`. See [validation](docs/VALIDATION.md)
+for individual verifier targets, reports, and the current readiness status, and
+[architecture](docs/ARCHITECTURE.md) for ownership and threading boundaries.
 
 ## Scope
 

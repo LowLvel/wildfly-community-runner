@@ -44,7 +44,7 @@ public final class ServerProfileDialog extends DialogWrapper {
     }
 
     public ServerProfile getProfile() {
-        applyFields();
+        readFieldsIntoProfile();
         return profile;
     }
 
@@ -131,7 +131,7 @@ public final class ServerProfileDialog extends DialogWrapper {
         return button;
     }
 
-    private void applyFields() {
+    private void readFieldsIntoProfile() {
         profile.name = nameField.getText().trim();
         profile.home = homeField.getText().trim();
         Object config = configCombo.getEditor().getItem();
@@ -146,7 +146,7 @@ public final class ServerProfileDialog extends DialogWrapper {
 
     @Override
     protected @Nullable ValidationInfo doValidate() {
-        applyFields();
+        readFieldsIntoProfile();
         if (profile.httpPort < 1 || profile.httpPort > 65535) return new ValidationInfo("HTTP port must be between 1 and 65535.");
         if (profile.debugPort < 1 || profile.debugPort > 65535) return new ValidationInfo("Debug port must be between 1 and 65535.");
         String error = WildFlyPaths.validate(profile);

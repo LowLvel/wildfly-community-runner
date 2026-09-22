@@ -46,7 +46,7 @@ public final class ServiceProfileDialog extends DialogWrapper {
     }
 
     public ServiceProfile getProfile() {
-        applyFields();
+        readFieldsIntoProfile();
         return working;
     }
 
@@ -209,7 +209,7 @@ public final class ServiceProfileDialog extends DialogWrapper {
         c.gridy++;
     }
 
-    private void applyFields() {
+    private void readFieldsIntoProfile() {
         BuildSystem system = (BuildSystem) buildSystem.getSelectedItem();
         if (system != null) working.buildSystem = system.name();
         working.name = nameField.getText().trim();
@@ -226,7 +226,7 @@ public final class ServiceProfileDialog extends DialogWrapper {
 
     @Override
     protected @Nullable ValidationInfo doValidate() {
-        applyFields();
+        readFieldsIntoProfile();
         if (working.name == null || working.name.isBlank()) return new ValidationInfo("Service name is required.");
         if (working.buildFilePath == null || working.buildFilePath.isBlank()) return new ValidationInfo("Select a Maven or Gradle build file.");
         String lower = working.buildFilePath.toLowerCase(Locale.ROOT);
