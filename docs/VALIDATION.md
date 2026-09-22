@@ -63,8 +63,8 @@ These tests do not replace testing against a running WildFly server.
 ## Ordered readiness work
 
 1. Plugin Verifier and multiple-version CI — passed [35715308965](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35715308965): three operating systems and six IDE targets.
-2. Automated behavior and platform integration tests (validation in progress).
-3. Native Run/Debug configurations.
+2. Automated behavior and platform integration tests — passed [35719197292](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35719197292): 19 plugin tests and five CI-helper tests on three operating systems, plus all six verifier targets.
+3. Native Run/Debug configurations (in progress).
 4. Notifications and error handling.
 5. Server detection.
 6. Onboarding.

@@ -16,6 +16,7 @@
     <depends>org.jetbrains.idea.maven</depends>
 
     <extensions defaultExtensionNs="com.intellij">
+        <configurationType implementation="io.github.wildflycommunityrunner.run.WildFlyConfigurationType"/>
         <toolWindow id="WildFly"
                     anchor="right"
                     factoryClass="io.github.wildflycommunityrunner.ui.WildFlyToolWindowFactory"/>

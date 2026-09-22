@@ -111,6 +111,15 @@ External deployments without an associated source can still be redeployed by re-
 
 ## Debugging
 
+IDEA's **Run → Edit Configurations → Add → WildFly** offers two native configuration types:
+
+- **Local Server** — select an existing WildFly profile, then use IDEA's Run or Debug buttons. Output appears in the standard Run/Debug console. Debug uses the profile's configured JDWP port and the Java debugger, including breakpoints and source navigation.
+- **Attach Debugger** — use Debug to connect to an already running WildFly. Stopping this session disconnects the debugger and leaves the server running.
+
+Configurations reference the application-wide profile by ID; they do not duplicate JVM options or machine paths. Create profiles in the WildFly tool window. A missing profile is reported in the configuration editor. Shared configuration files need a corresponding local profile selection on each machine.
+
+A Local Server session reuses a managed server when possible. Stop terminates a server started by that session; Stop on a reused session only disconnects it. Detach leaves the global server available to other projects. An externally started server uses the Attach Debugger configuration. Maven/Gradle builds and multi-service deployment remain in the WildFly tool window; IDEA does not add an implicit Make task for these server configurations.
+
 **Debug** starts WildFly with `--debug <configured-port>` when the server is stopped, then attaches IntelliJ's debugger. If a server is already detected externally, the plugin does not restart it; it attempts to attach to the configured debug port.
 
 ## IntelliJ threading

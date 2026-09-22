@@ -134,6 +134,32 @@ public final class WildFlyProcessService {
             return;
         }
 
+        createProcess(profile, debug, output).startNotify();
+    }
+
+    public record LaunchResult(KillableProcessHandler handler, boolean ownsProcess) {}
+
+    /** Called on a pooled thread by a native Run/Debug session. The owner starts notifications after binding its console. */
+    public synchronized LaunchResult startForExecution(ServerProfile profile, boolean debug) throws Exception {
+        KillableProcessHandler current = handlers.get(profile.id);
+        if (current != null && current.isProcessTerminating()) {
+            throw new IllegalStateException("WildFly is still stopping. Wait for it to exit before starting another session.");
+        }
+        if (isRunning(profile)) {
+            if (debug && !isDebugRunning(profile)) {
+                throw new IllegalStateException("This WildFly is already running without debugging. Stop it before starting Debug, or use Attach if JDWP was enabled separately.");
+            }
+            return new LaunchResult(handlers.get(profile.id), false);
+        }
+        if (isDetectedRunning(profile)) {
+            throw new IllegalStateException("A server is already running at " + endpoint(profile)
+                    + ". Use the WildFly Attach Debugger configuration to attach without restarting it.");
+        }
+        return new LaunchResult(createProcess(profile, debug, ignored -> {}), true);
+    }
+
+    private KillableProcessHandler createProcess(ServerProfile profile, boolean debug, Consumer<String> output) throws Exception {
+
         String validationError = WildFlyPaths.validate(profile);
         if (validationError != null) throw new IllegalArgumentException(validationError);
 
@@ -186,12 +212,11 @@ public final class WildFlyProcessService {
 
             @Override
             public void processTerminated(@NotNull ProcessEvent event) {
-                handlers.remove(profile.id);
-                debugModes.remove(profile.id);
+                if (handlers.remove(profile.id, handler)) debugModes.remove(profile.id);
                 output.accept(profile.name + " terminated with exit code " + event.getExitCode());
             }
         });
-        handler.startNotify();
+        return handler;
     }
 
     public void terminateAndWait(ServerProfile profile, Consumer<String> output) throws InterruptedException {
