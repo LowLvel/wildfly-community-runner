@@ -14,9 +14,12 @@ import java.awt.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.rules.TemporaryFolder;
 
 public class ManagerPanelTest extends BasePlatformTestCase {
     public void testRawSwingCanCreatePanelAndRenderingUsesCachedStatusAndTimestamp() throws Exception {
+        var temporary = new TemporaryFolder();
+        temporary.create();
         var app = WildFlyApplicationSettings.getInstance();
         var projectSettings = WildFlyProjectSettings.getInstance(getProject());
         var previousApp = app.getState();
@@ -26,7 +29,7 @@ public class ManagerPanelTest extends BasePlatformTestCase {
             app.loadState(new WildFlyApplicationSettings.StateData());
             projectSettings.loadState(new WildFlyProjectSettings.StateData());
             var server = new ServerProfile();
-            server.home = myFixture.getTempDirFixture().getTempDirPath();
+            server.home = temporary.getRoot().getAbsolutePath();
             app.servers().add(server);
             projectSettings.getState().selectedServerId = server.id;
             var service = new ServiceProfile();
@@ -56,6 +59,7 @@ public class ManagerPanelTest extends BasePlatformTestCase {
             if (created.get() != null) Disposer.dispose(created.get());
             app.loadState(previousApp);
             projectSettings.loadState(previousProject);
+            temporary.delete();
         }
     }
 
