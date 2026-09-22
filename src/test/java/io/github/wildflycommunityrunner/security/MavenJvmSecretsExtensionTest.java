@@ -90,6 +90,27 @@ public class MavenJvmSecretsExtensionTest extends BasePlatformTestCase {
         } finally { sessions.dispose(); secrets.dispose(); }
     }
 
+    public void testUnquotedUnixCommandPresentationReleasesAPathContainingSpaces() throws Exception {
+        var secrets = new JvmSecrets(new JvmSecretsTest.MemoryStore());
+        var sessions = new MavenSecretSessions(() -> secrets);
+        Path root = Files.createTempDirectory("Maven private path with spaces ");
+        PrivateJvmOptions options = null;
+        Process unrelated = new Process();
+        try {
+            options = PrivateJvmOptions.create("", java.util.List.of(), java.util.List.of("-Dpassword=fixture"), java.util.List.of("fixture"), root);
+            sessions.remember(secrets, options);
+            unrelated.startNotify();
+            sessions.attach(unrelated, "java -Dreference=@" + options.file());
+            assertTrue(Files.exists(options.file()));
+            Process process = new Process(); process.startNotify();
+            sessions.attach(process, "java @" + options.file() + " -classpath classes Main");
+            process.finish(); awaitDeleted(options.file());
+        } finally {
+            unrelated.finish(); sessions.dispose(); if (options != null) options.close();
+            secrets.dispose(); Files.deleteIfExists(root);
+        }
+    }
+
     private static JavaParameters parameters(String options, MavenSecretSessions sessions) throws Exception {
         JavaParameters parameters = new JavaParameters(); parameters.getVMParametersList().addParametersString(options);
         MavenJvmSecretsExtension.updateParameters(parameters, sessions); return parameters;
