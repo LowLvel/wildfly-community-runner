@@ -27,6 +27,13 @@ and macOS. Independent Plugin Verifier jobs retain reports even on failure.
 intended required status check for branch protection. Cancelling a matrix job
 cannot result in a successful gate. No job publishes to Marketplace.
 
+CI retries only the known [JetBrains layout-index race](https://github.com/JetBrains/intellij-platform-gradle-plugin/issues/2192)
+when its exact error signatures appear before any Gradle task executes, at most
+three attempts. Only generated layout-index JSON is cleared. Compiler, test, and
+verifier failures are never retried by this helper. Its retry policy has dedicated
+Python tests. The first test-stage run hit this upstream race; an unchanged Linux
+retry and both other operating systems executed all 19 regression tests successfully.
+
 Verifier errors for incompatible binaries, internal APIs, override-only APIs,
 non-extendable APIs, missing dependencies, and invalid plugins block the build.
 Warnings and deprecations remain in the reports for review. They must be assessed
