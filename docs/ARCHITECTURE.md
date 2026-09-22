@@ -33,6 +33,12 @@ resolves a configured override or a final WAR/EAR/JAR in the output directory.
 `DeploymentScannerService` copies artifacts via temporary files and coordinates
 WildFly scanner markers. `DebugAttachService` uses the Java remote debugger.
 
+External process detection requires the standalone entry point and matching home,
+server base, and configuration. Background filesystem identity checks accommodate
+canonical paths such as macOS `/var` and `/private/var`. Windows CIM command rows
+also recognize the implicit `.exe` suffix used by the vendor's Java launcher;
+PID and creation time are checked before a process can be stopped.
+
 `BuildLifecycleService` owns one cancellable batch per project. `BuildBatch`
 snapshots the selection, sequences build/deploy completion, and holds watcher
 suppression through deployment. `BuildOperation` owns exactly one build process,

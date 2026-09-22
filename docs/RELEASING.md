@@ -35,6 +35,8 @@ Run **Prepare or publish Marketplace update** manually from `main`, leaving
 3. Downloads the unsigned candidate from that exact validation run and checks its
    plugin ID and version against the checked-out source.
 4. Signs those bytes and verifies the signature. No replacement build is signed.
+   Verification and publishing both select the signed output explicitly, including
+   when Gradle considers the signing task up to date.
 5. Uploads unsigned/signed ZIPs, `SHA256SUMS`, and a commit/version manifest in
    `signed-marketplace-candidate`. It does not upload to Marketplace in prepare mode.
 

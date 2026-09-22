@@ -88,6 +88,8 @@ tasks {
     }
     publishPlugin {
         dependsOn(verifyPluginSignature)
+        // Publish the verified bytes even when signing is already up to date.
+        archiveFiles.setFrom(signPlugin.flatMap { it.signedArchiveFile })
     }
     test {
         useJUnit()
