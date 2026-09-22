@@ -7,6 +7,7 @@ import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.Socket;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -89,10 +90,10 @@ public final class WildFlyServerDetector {
             String config = WildFlyPaths.configurationArgument(arguments.subList(entry + 1, arguments.size()), "standalone.xml");
             var actual = new WildFlyPaths.Identity(home, base, configDir.resolve(config).normalize());
             var expected = WildFlyPaths.identity(profile);
-            if (!actual.base().equals(expected.base()) || (exactConfiguration && (!actual.home().equals(expected.home())
-                    || !actual.configuration().equals(expected.configuration())))) return false;
+            if (!samePath(actual.base(), expected.base()) || (exactConfiguration && (!samePath(actual.home(), expected.home())
+                    || !samePath(actual.configuration(), expected.configuration())))) return false;
             int jar = arguments.indexOf("-jar");
-            return jar < 0 || absolute(WildFlyPaths.unquote(arguments.get(jar + 1))).equals(home.resolve("jboss-modules.jar"));
+            return jar < 0 || samePath(absolute(WildFlyPaths.unquote(arguments.get(jar + 1))), home.resolve("jboss-modules.jar"));
         } catch (IllegalArgumentException | IndexOutOfBoundsException ignored) { return false; }
     }
 
@@ -101,7 +102,7 @@ public final class WildFlyServerDetector {
         for (int i = 0; i < arguments.size(); i++) {
             String argument = arguments.get(i);
             if (!modulesLauncher) {
-                if (argument.startsWith("@") && absolute(WildFlyPaths.unquote(argument.substring(1))).equals(serialFilter)) {
+                if (argument.startsWith("@") && samePath(absolute(WildFlyPaths.unquote(argument.substring(1))), serialFilter)) {
                     // Recent WildFly distributions supply their JDK serial filter through
                     // this fixed argument file. Arbitrary @files remain unverified.
                     continue;
@@ -130,6 +131,14 @@ public final class WildFlyServerDetector {
         Path path = Path.of(text).normalize();
         if (!path.isAbsolute()) throw new IllegalArgumentException("External process path is not absolute");
         return path;
+    }
+
+    private static boolean samePath(Path first, Path second) {
+        if (first.equals(second)) return true;
+        // Detection already runs in the background. Vendor launchers canonicalize
+        // aliases such as macOS /var -> /private/var and Windows short directory names.
+        try { return Files.isSameFile(first, second); }
+        catch (java.io.IOException | SecurityException inaccessible) { return false; }
     }
 
     public static String connectionHost(String configured) {

@@ -41,6 +41,13 @@ public class WindowsProcessQueryTest {
         assertTrue(WindowsProcessQuery.parseRows("123\t456\t%invalid\tbase64").isEmpty());
     }
 
+    @Test public void acceptsTheImplicitExeSuffixUsedByStandaloneBat() {
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toAbsolutePath().toString();
+        assertEquals(1, WindowsProcessQuery.parseRows(row("123", "456", java + ".exe", "\"" + java + "\" -jar server.jar")).size());
+        assertTrue(WindowsProcessQuery.parseRows(row("123", "456", java + ".exe", "java -jar server.jar")).isEmpty());
+        assertTrue(WindowsProcessQuery.parseRows(row("123", "456", java + ".exe", "\"" + java + "-other\" -jar server.jar")).isEmpty());
+    }
+
     private static String row(String pid, String started, String executable, String command) {
         var encoder = Base64.getEncoder();
         return pid + "\t" + started + "\t" + encoder.encodeToString(executable.getBytes(StandardCharsets.UTF_8))

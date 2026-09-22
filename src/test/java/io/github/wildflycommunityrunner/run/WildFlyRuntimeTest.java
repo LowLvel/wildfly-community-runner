@@ -52,6 +52,7 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             background(() -> {
                 Path configuration = base.resolve("configuration"); Files.createDirectories(configuration);
                 Files.createDirectories(base.resolve("deployments"));
+                Files.createDirectories(base.resolve("tns with spaces"));
                 try (var entries = Files.list(Path.of(home, "standalone", "configuration"))) {
                     for (Path entry : entries.toList()) if (Files.isRegularFile(entry))
                         Files.copy(entry, configuration.resolve(entry.getFileName().toString()));
@@ -223,7 +224,7 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             output.putNextEntry(new ZipEntry("index.jsp"));
             String jsp = "<%@ page contentType=\"text/plain\" %>" + version
                     + ":<%= java.util.Objects.equals(System.getProperty(\"wildfly.fixture.password\"), System.getenv(\"WILDFLY_SMOKE_PASSWORD\"))"
-                    + " && java.nio.file.Path.of(System.getProperty(\"jboss.server.base.dir\"), \"tns with spaces\").toString().equals(System.getProperty(\"oracle.net.tns_admin\"))"
+                    + " && java.nio.file.Files.isSameFile(java.nio.file.Path.of(System.getProperty(\"jboss.server.base.dir\"), \"tns with spaces\"), java.nio.file.Path.of(System.getProperty(\"oracle.net.tns_admin\")))"
                     + " ? \"credential-ok\" : \"credential-missing\" %>";
             output.write(jsp.getBytes(StandardCharsets.UTF_8)); output.closeEntry();
         }

@@ -84,11 +84,20 @@ final class WindowsProcessQuery {
                 String executable = new String(Base64.getDecoder().decode(fields[2]), StandardCharsets.UTF_8);
                 String commandLine = new String(Base64.getDecoder().decode(fields[3]), StandardCharsets.UTF_8);
                 List<String> argv = parseCommandLine(commandLine);
-                if (pid <= 0 || created <= 0 || argv.isEmpty() || !Path.of(argv.getFirst()).normalize().equals(Path.of(executable).normalize())) continue;
+                if (pid <= 0 || created <= 0 || argv.isEmpty() || !sameExecutable(argv.getFirst(), executable)) continue;
                 commands.add(new Command(pid, created, executable, List.copyOf(argv.subList(1, argv.size()))));
             } catch (IllegalArgumentException ignored) { /* Never guess from a truncated or malformed row. */ }
         }
         return List.copyOf(commands);
+    }
+
+    private static boolean sameExecutable(String command, String executable) {
+        Path actual = Path.of(executable).normalize(), requested = Path.of(command).normalize();
+        if (actual.equals(requested)) return true;
+        // Windows supplies the .exe suffix when a vendor launcher invokes an absolute
+        // JAVA_HOME/bin/java path. CIM's ExecutablePath always includes that suffix.
+        return executable.toLowerCase(java.util.Locale.ROOT).endsWith(".exe")
+                && Path.of(executable.substring(0, executable.length() - 4)).normalize().equals(requested);
     }
 
     /** Microsoft CRT quoting: 2n backslashes before quotes escape n slashes; 2n+1 also escapes the quote. */

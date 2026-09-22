@@ -83,6 +83,9 @@ tasks {
         }
         signedArchiveFile.set(layout.buildDirectory.file("release/wildfly-community-runner-${project.version}-signed.zip"))
     }
+    verifyPluginSignature {
+        inputArchiveFile.set(signPlugin.flatMap { it.signedArchiveFile })
+    }
     publishPlugin {
         dependsOn(verifyPluginSignature)
     }

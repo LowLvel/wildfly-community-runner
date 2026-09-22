@@ -1,6 +1,7 @@
 package io.github.wildflycommunityrunner.ui;
 
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.IconLoader;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import io.github.wildflycommunityrunner.model.ServerProfile;
@@ -27,10 +28,11 @@ public class MarketplaceScreenshotsTest extends BasePlatformTestCase {
         var project = WildFlyProjectSettings.getInstance(getProject());
         var oldApp = app.getState(); var oldProject = project.getState();
         var created = new AtomicReference<WildFlyManagerPanel>();
-        Path fixture = Path.of("build", "marketplace-sample-workspace");
+        Path fixture = Path.of(System.getProperty("java.io.tmpdir"), "wildfly-marketplace-sample");
         assertFalse("Screenshot fixture must start clean", Files.exists(fixture));
         var server = new ServerProfile(); server.name = "Development"; server.home = fixture.resolve("wildfly").toString();
         try {
+            IconLoader.activate();
             Path deployments = WildFlyPaths.deploymentsDir(server); Files.createDirectories(deployments);
             Files.writeString(deployments.resolve("billing-api.war.deployed"), "sample scanner marker");
             Files.writeString(deployments.resolve("orders-api.war.deployed"), "sample scanner marker");
@@ -74,6 +76,7 @@ public class MarketplaceScreenshotsTest extends BasePlatformTestCase {
             capture(panel, "server-log.png", "Read server.log without leaving the tool window");
         } finally {
             if (created.get() != null) Disposer.dispose(created.get());
+            IconLoader.deactivate();
             app.loadState(oldApp); project.loadState(oldProject);
             if (Files.exists(fixture)) try (var files = Files.walk(fixture)) {
                 for (Path path : files.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
@@ -95,10 +98,18 @@ public class MarketplaceScreenshotsTest extends BasePlatformTestCase {
         heading.add(title); heading.add(new JLabel(subtitle));
         canvas.add(heading, BorderLayout.NORTH); canvas.add(panel, BorderLayout.CENTER);
         canvas.add(new JLabel("Sample workspace · actual plugin panels rendered in the IntelliJ test application"), BorderLayout.SOUTH);
-        canvas.setSize(800, 500); layout(canvas);
+        // A detached headless table has not received addNotify's usual header setup.
+        for (JScrollPane scroll : components(panel, JScrollPane.class)) {
+            if (scroll.getViewport().getView() instanceof JTable table) scroll.setColumnHeaderView(table.getTableHeader());
+        }
+        canvas.setSize(1000, 625); layout(canvas); layout(canvas);
         var image = new BufferedImage(1280, 800, BufferedImage.TYPE_INT_RGB);
         Graphics2D graphics = image.createGraphics();
-        try { graphics.scale(1.6, 1.6); canvas.printAll(graphics); } finally { graphics.dispose(); }
+        try {
+            graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            graphics.scale(1.28, 1.28); canvas.printAll(graphics);
+        } finally { graphics.dispose(); }
         Path directory = Path.of(System.getProperty("wildfly.test.screenshots")); Files.createDirectories(directory);
         assertTrue(ImageIO.write(image, "png", directory.resolve(file).toFile()));
         assertTrue(Files.size(directory.resolve(file)) > 10000);

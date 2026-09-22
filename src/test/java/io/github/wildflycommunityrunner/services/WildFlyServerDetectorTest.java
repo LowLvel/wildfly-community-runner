@@ -5,6 +5,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 import static org.junit.Assert.*;
@@ -70,6 +71,19 @@ public class WildFlyServerDetectorTest {
         arguments.addFirst("@" + Path.of(profile.home, "bin", "jdk.serialFilter"));
         assertTrue(WildFlyServerDetector.matches(profile, "java", arguments));
         arguments.set(0, "@" + Path.of(profile.home, "other.args"));
+        assertFalse(WildFlyServerDetector.matches(profile, "java", arguments));
+    }
+
+    @Test public void recognizesTheSameConfigurationFileThroughFilesystemAliases() throws Exception {
+        var profile = profile();
+        Path configuration = Path.of(profile.home, "standalone", "configuration", "standalone.xml");
+        Files.createDirectories(configuration.getParent()); Files.writeString(configuration, "<server/>");
+        Path alias = temp.newFolder("configuration alias").toPath();
+        Files.createLink(alias.resolve("standalone.xml"), configuration);
+        var arguments = arguments(profile);
+        arguments.add("-Djboss.server.config.dir=" + alias);
+        assertTrue(WildFlyServerDetector.matches(profile, "java", arguments));
+        Files.delete(alias.resolve("standalone.xml")); Files.writeString(alias.resolve("standalone.xml"), "<server/>");
         assertFalse(WildFlyServerDetector.matches(profile, "java", arguments));
     }
 
