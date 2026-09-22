@@ -99,8 +99,8 @@ public final class ArtifactAutoDeployService implements Disposable {
     }
 
     /** Keep suppression briefly after the build callback so late filesystem events are absorbed. */
-    public void releaseSuppression(ServiceProfile service) {
-        if (service == null) return;
+    public synchronized void releaseSuppression(ServiceProfile service) {
+        if (service == null || disposed) return;
         scheduler.schedule(() -> suppressed.remove(service.id), 2, TimeUnit.SECONDS);
     }
 

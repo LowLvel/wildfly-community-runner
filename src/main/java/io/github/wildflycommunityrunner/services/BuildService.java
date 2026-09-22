@@ -11,21 +11,22 @@ import java.util.function.Consumer;
 public final class BuildService {
     private BuildService() {}
 
-    public static void build(Project project,
-                             ServiceProfile service,
-                             Runnable onSuccess,
-                             Runnable onFailure,
-                             Consumer<String> output) {
+    public static BuildOperation build(Project project, ServiceProfile service, Consumer<String> output) {
         ServiceProfile snapshot = new ServiceProfile(service);
+        var operation = new BuildOperation(command -> ApplicationManager.getApplication().executeOnPooledThread(command));
+        operation.completion().thenAccept(result -> output.accept(snapshot.name + ": " + result.detail()));
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            if (project.isDisposed()) return;
-            snapshot.migrateLegacyFields();
-            if (snapshot.buildSystemEnum() == BuildSystem.GRADLE) {
-                GradleBuildService.build(project, snapshot, onSuccess, onFailure, output);
-            } else {
-                MavenBuildService.build(project, snapshot, onSuccess, onFailure, output);
-            }
+            try {
+                if (project.isDisposed()) { operation.cancel(); return; }
+                snapshot.migrateLegacyFields();
+                if (snapshot.buildSystemEnum() == BuildSystem.GRADLE) GradleBuildService.build(project, snapshot, operation, output);
+                else MavenBuildService.build(project, snapshot, operation, output);
+            } catch (com.intellij.openapi.progress.ProcessCanceledException cancelled) {
+                operation.failed(cancelled);
+                throw cancelled;
+            } catch (Exception error) { operation.failed(error); }
         });
+        return operation;
     }
 
     public static Path resolveBuildFile(Project project, ServiceProfile service) {

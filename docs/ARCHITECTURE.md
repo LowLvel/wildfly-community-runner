@@ -26,6 +26,14 @@ resolves a configured override or a final WAR/EAR/JAR in the output directory.
 `DeploymentScannerService` copies artifacts via temporary files and coordinates
 WildFly scanner markers. `DebugAttachService` uses the Java remote debugger.
 
+`BuildLifecycleService` owns one cancellable batch per project. `BuildBatch`
+snapshots the selection, sequences build/deploy completion, and holds watcher
+suppression through deployment. `BuildOperation` owns exactly one build process,
+including late process creation after cancellation. Maven subscribes to public
+execution events filtered by the exact environment before `startNotify`, with
+callbacks and exit-code checks as fallbacks. Native progress and the tool window
+both cancel the same operation. Closing a tool window does not own the batch.
+
 The `run` package registers native Local Server and Attach Debugger configuration
 factories. Configurations persist a global server-profile ID, keeping JVM options
 out of shared run-configuration XML. Standard Java Run/Debug runners bind an
@@ -35,8 +43,8 @@ does not kill it. The disposable project session service detaches listeners on
 project close and plugin unload.
 
 `WildFlyManagerPanel` presents server controls, a multi-selection project table,
-a separate external-deployments table, and activity logs. It currently also
-orchestrates build/deploy sequences and several asynchronous refreshes. Changes
+a separate external-deployments table, and activity logs. It delegates build
+batches to the project service and owns several asynchronous refreshes. Changes
 should extract focused responsibilities when needed, preserving these flows.
 
 ## Threading boundary

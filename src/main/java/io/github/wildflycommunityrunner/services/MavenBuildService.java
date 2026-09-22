@@ -1,17 +1,14 @@
 package io.github.wildflycommunityrunner.services;
 
-import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
-import com.intellij.execution.process.ProcessListener;
 import com.intellij.execution.runners.ProgramRunner;
-import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import io.github.wildflycommunityrunner.util.IdeUi;
+import io.github.wildflycommunityrunner.util.ProjectTrust;
 import com.intellij.util.execution.ParametersListUtil;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
-import org.jetbrains.annotations.NotNull;
 import org.jetbrains.idea.maven.execution.MavenRunConfigurationType;
 import org.jetbrains.idea.maven.execution.MavenRunner;
 import org.jetbrains.idea.maven.execution.MavenRunnerParameters;
@@ -26,75 +23,47 @@ import java.util.function.Consumer;
 public final class MavenBuildService {
     private MavenBuildService() {}
 
-    public static void build(Project project,
-                             ServiceProfile service,
-                             Runnable onSuccess,
-                             Runnable onFailure,
-                             Consumer<String> output) {
-        try {
-            Path pom = resolvePom(project, service);
-            String workDir = pom.getParent().toString();
-            String taskText = service.buildTasks == null || service.buildTasks.isBlank() ? "clean package" : service.buildTasks;
-            List<String> goals = new ArrayList<>(ParametersListUtil.parse(taskText));
-            if (service.buildArguments != null && !service.buildArguments.isBlank()) {
-                goals.addAll(ParametersListUtil.parse(service.buildArguments));
-            }
-
-            MavenRunnerParameters parameters = new MavenRunnerParameters();
-            parameters.setWorkingDirPath(workDir);
-            parameters.setPomFileName(pom.getFileName().toString());
-            parameters.setGoals(goals);
-            parameters.setResolveToWorkspace(true);
-
-            output.accept("Building " + service.name + " — Maven " + String.join(" ", goals));
-
-            // IntelliJ 2025.1 no longer gives raw Swing callbacks an implicit write-intent
-            // lock. Saving documents and creating/running the Maven configuration can touch
-            // platform model state, so both operations must begin from Application.invokeLater().
-            IdeUi.later(project, () -> {
-                try {
-                    FileDocumentManager.getInstance().saveAllDocuments();
-                    MavenRunner runner = MavenRunner.getInstance(project);
-                    MavenRunnerSettings settings = runner.getSettings().clone();
-                    String inheritedVmOptions = settings.getVmOptions() == null ? "" : settings.getVmOptions().trim();
-                    String serviceVmOptions = service.buildJvmOptions == null ? "" : service.buildJvmOptions.trim();
-                    settings.setVmOptions((inheritedVmOptions + " " + serviceVmOptions).trim());
-
-                    ProgramRunner.Callback callback = descriptor -> {
+    static void build(Project project, ServiceProfile service, BuildOperation operation, Consumer<String> output) {
+        Path pom = resolvePom(project, service);
+        String tasks = service.buildTasks == null || service.buildTasks.isBlank() ? "clean package" : service.buildTasks;
+        List<String> goals = new ArrayList<>(ParametersListUtil.parse(tasks));
+        if (service.buildArguments != null && !service.buildArguments.isBlank()) goals.addAll(ParametersListUtil.parse(service.buildArguments));
+        MavenRunnerParameters parameters = new MavenRunnerParameters();
+        parameters.setWorkingDirPath(pom.getParent().toString());
+        parameters.setPomFileName(pom.getFileName().toString());
+        parameters.setGoals(goals);
+        parameters.setResolveToWorkspace(true);
+        IdeUi.later(project, () -> operation.completion().isDone(), () -> {
+            try {
+                if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
+                FileDocumentManager.getInstance().saveAllDocuments();
+                MavenRunnerSettings settings = MavenRunner.getInstance(project).getSettings().clone();
+                String inherited = settings.getVmOptions() == null ? "" : settings.getVmOptions().trim();
+                String options = service.buildJvmOptions == null ? "" : service.buildJvmOptions.trim();
+                settings.setVmOptions((inherited + " " + options).trim());
+                var configuration = MavenRunConfigurationType.createRunnerAndConfigurationSettings(
+                        null, settings, parameters, project, "WildFly build: " + service.name, false);
+                var callback = new ProgramRunner.Callback() {
+                    @Override public void processStarted(com.intellij.execution.ui.RunContentDescriptor descriptor) {
                         ProcessHandler handler = descriptor.getProcessHandler();
-                        if (handler == null) {
-                            output.accept("ERROR: Maven process did not start for " + service.name);
-                            if (onFailure != null) onFailure.run();
-                            return;
-                        }
-                        handler.addProcessListener(new ProcessListener() {
-                            @Override
-                            public void processTerminated(@NotNull ProcessEvent event) {
-                                if (event.getExitCode() == 0) {
-                                    output.accept("Build succeeded: " + service.name);
-                                    if (onSuccess != null) onSuccess.run();
-                                } else {
-                                    output.accept("BUILD FAILED: " + service.name + " (exit " + event.getExitCode() + ")");
-                                    if (onFailure != null) onFailure.run();
-                                }
-                            }
-                        });
-                    };
-
-                    MavenRunConfigurationType.runConfiguration(project, parameters, null, settings, callback, false);
-                } catch (ProcessCanceledException cancelled) {
-                    throw cancelled;
-                } catch (Exception e) {
-                    output.accept("ERROR launching Maven: " + e.getMessage());
-                    if (onFailure != null) onFailure.run();
-                }
-            });
-        } catch (ProcessCanceledException cancelled) {
-            throw cancelled;
-        } catch (Exception e) {
-            output.accept("ERROR: " + e.getMessage());
-            if (onFailure != null) onFailure.run();
-        }
+                        if (handler == null) operation.failed(new IllegalStateException("Maven process did not start"));
+                        else operation.bind(handler);
+                    }
+                    @Override public void processNotStarted(Throwable error) {
+                        operation.failed(error == null ? new IllegalStateException("Maven launch did not start") : error);
+                    }
+                };
+                var environment = com.intellij.execution.runners.ExecutionEnvironmentBuilder.create(
+                        com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance(), configuration).build(callback);
+                new BuildExecutionListener(project, environment, operation);
+                if (!operation.beginLaunch()) return;
+                output.accept("Building " + service.name + " — Maven " + String.join(" ", goals));
+                environment.getRunner().execute(environment);
+            } catch (ProcessCanceledException cancelled) {
+                operation.failed(cancelled);
+                throw cancelled;
+            } catch (Exception error) { operation.failed(error); }
+        });
     }
 
     public static Path resolvePom(Project project, ServiceProfile service) {

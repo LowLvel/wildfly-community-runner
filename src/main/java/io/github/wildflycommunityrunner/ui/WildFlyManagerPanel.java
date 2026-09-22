@@ -17,7 +17,8 @@ import com.intellij.util.ui.JBUI;
 import io.github.wildflycommunityrunner.model.BuildSystem;
 import io.github.wildflycommunityrunner.model.ServerProfile;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
-import io.github.wildflycommunityrunner.services.ArtifactAutoDeployService;
+import io.github.wildflycommunityrunner.services.BuildBatch;
+import io.github.wildflycommunityrunner.services.BuildLifecycleService;
 import io.github.wildflycommunityrunner.services.BuildProjectDiscoveryService;
 import io.github.wildflycommunityrunner.services.BuildProjectDiscoveryService.BuildProjectChoice;
 import io.github.wildflycommunityrunner.services.BuildService;
@@ -69,7 +70,6 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
     private static final DateTimeFormatter DEPLOY_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    private enum BuildDeployMode { AUTO, FORCE_DEPLOY, BUILD_ONLY }
     private enum SelectionSource { PROJECT, EXTERNAL, NONE }
 
     private record ExternalDeployment(String deploymentName, ServiceProfile source) {}
@@ -85,6 +85,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private final ExternalTableModel externalTableModel = new ExternalTableModel();
     private final JTable externalTable = new JTable(externalTableModel);
     private final JPanel externalSection = new JPanel(new BorderLayout(4, 4));
+    private final JLabel buildProgress = new JLabel("No build running");
+    private final JButton cancelBuild = new JButton("Cancel Build");
     private final JLabel selectionLabel = new JLabel("No service selected");
 
     private final JTextArea output = new JTextArea();
@@ -117,6 +119,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         loadSettings();
         project.getMessageBus().connect(this).subscribe(ProjectSetupService.CHANGED,
                 () -> onUi(this::refreshAfterSetup));
+        project.getMessageBus().connect(this).subscribe(BuildLifecycleService.CHANGED,
+                () -> onUi(() -> { refreshBuildProgress(); refreshExternalDeployments(); }));
+        refreshBuildProgress();
         refreshTimer = new Timer(2000, e -> {
             if (disposed || project.isDisposed()) {
                 ((Timer) e.getSource()).stop();
@@ -144,7 +149,14 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         servicesTab.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         servicesTab.add(buildServerPanel(), BorderLayout.NORTH);
         servicesTab.add(buildServicesWorkspace(), BorderLayout.CENTER);
-        servicesTab.add(buildSelectionActionBar(), BorderLayout.SOUTH);
+        JPanel footer = new JPanel(new BorderLayout(4, 4));
+        footer.add(buildSelectionActionBar(), BorderLayout.NORTH);
+        JPanel progressRow = new JPanel(new BorderLayout(4, 0));
+        progressRow.add(buildProgress, BorderLayout.CENTER);
+        progressRow.add(cancelBuild, BorderLayout.EAST);
+        cancelBuild.addActionListener(e -> onUi(() -> project.getService(BuildLifecycleService.class).cancel()));
+        footer.add(progressRow, BorderLayout.SOUTH);
+        servicesTab.add(footer, BorderLayout.SOUTH);
 
         JPanel logsTab = new JPanel(new BorderLayout(4, 4));
         logsTab.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
@@ -407,11 +419,11 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         JPanel actions = compactToolbar(build, redeploy, browser, more);
         bar.add(actions, BorderLayout.EAST);
 
-        build.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.AUTO)));
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.AUTO)));
         redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
         browser.addActionListener(e -> onUi(() -> openSelectedInBrowser()));
-        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.FORCE_DEPLOY)));
-        buildOnly.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.BUILD_ONLY)));
+        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.FORCE_DEPLOY)));
+        buildOnly.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.BUILD_ONLY)));
         undeploy.addActionListener(e -> onUi(() -> undeploySelected()));
         autoOn.addActionListener(e -> onUi(() -> setSelectedAutoDeploy(true)));
         autoOff.addActionListener(e -> onUi(() -> setSelectedAutoDeploy(false)));
@@ -487,9 +499,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         menu.add(build); menu.add(buildDeploy); menu.add(buildOnly); menu.add(redeploy); menu.add(undeploy); menu.add(browser);
         menu.addSeparator(); menu.add(autoOn); menu.add(autoOff); menu.add(edit);
         menu.addSeparator(); menu.add(module); menu.add(artifact); menu.add(remove);
-        build.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.AUTO)));
-        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.FORCE_DEPLOY)));
-        buildOnly.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.BUILD_ONLY)));
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.AUTO)));
+        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.FORCE_DEPLOY)));
+        buildOnly.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.BUILD_ONLY)));
         redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
         undeploy.addActionListener(e -> onUi(() -> undeploySelected()));
         browser.addActionListener(e -> onUi(() -> openSelectedInBrowser()));
@@ -530,8 +542,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         addToProject.setEnabled(single && selected.get(0).source() != null);
         module.setEnabled(single && selected.get(0).source() != null);
         artifact.setEnabled(single && selected.get(0).source() != null);
-        build.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.AUTO)));
-        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildDeployMode.FORCE_DEPLOY)));
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.AUTO)));
+        buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.FORCE_DEPLOY)));
         redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
         undeploy.addActionListener(e -> onUi(() -> undeploySelected()));
         browser.addActionListener(e -> onUi(() -> openSelectedInBrowser()));
@@ -812,7 +824,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 && a.httpPort == b.httpPort && a.debugPort == b.debugPort;
     }
 
-    private void buildSelected(BuildDeployMode mode) {
+    private void buildSelected(BuildBatch.Mode mode) {
         boolean externalSelection = selectionSource() == SelectionSource.EXTERNAL;
         List<ServiceProfile> services;
         if (externalSelection) {
@@ -824,36 +836,17 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
             services = selectedServices().stream().map(ServiceProfile::new).toList();
         }
         if (services.isEmpty()) { append("Select one or more services first."); return; }
-        ServerProfile server = mode == BuildDeployMode.FORCE_DEPLOY ? requireServer()
+        ServerProfile server = mode == BuildBatch.Mode.FORCE_DEPLOY ? requireServer()
                 : selectedServer() == null ? null : new ServerProfile(selectedServer());
-        if (mode == BuildDeployMode.FORCE_DEPLOY && server == null) return;
-        append("Building " + services.size() + " service(s) sequentially.");
-        buildAt(services, server, 0, mode, externalSelection);
+        if (mode == BuildBatch.Mode.FORCE_DEPLOY && server == null) return;
+        project.getService(BuildLifecycleService.class).start(services, server, mode, externalSelection, activityOutput);
     }
 
-    private void buildAt(List<ServiceProfile> services, ServerProfile server, int index, BuildDeployMode mode, boolean externalSelection) {
-        if (index >= services.size()) { append("Build operation completed."); refreshExternalDeployments(); return; }
-        ServiceProfile service = services.get(index);
-        rememberService(service);
-        ArtifactAutoDeployService watcher = ArtifactAutoDeployService.getInstance(project);
-        if (mode != BuildDeployMode.AUTO) watcher.suppress(service);
-        BuildService.build(project, service,
-                () -> onUi(() -> {
-                    if (mode != BuildDeployMode.AUTO) watcher.releaseSuppression(service);
-                    if (mode == BuildDeployMode.FORCE_DEPLOY && server != null) {
-                        deployService(service, server, () -> buildAt(services, server, index + 1, mode, externalSelection));
-                    } else if (mode == BuildDeployMode.AUTO && externalSelection && service.deployAfterBuild && server != null) {
-                        // External remembered sources are not watched by this project's Auto watcher.
-                        deployService(service, server, () -> buildAt(services, server, index + 1, mode, true));
-                    } else {
-                        buildAt(services, server, index + 1, mode, externalSelection);
-                    }
-                }),
-                () -> onUi(() -> {
-                    if (mode != BuildDeployMode.AUTO) watcher.releaseSuppression(service);
-                    PluginNotifications.failure(project, "Build failed", "Build operation stopped at " + service.name + ". See the build console for details.", activityOutput);
-                }),
-                activityOutput);
+    private void refreshBuildProgress() {
+        var status = project.getService(BuildLifecycleService.class).status();
+        buildProgress.setText(status.text());
+        buildProgress.setToolTipText(status.text());
+        cancelBuild.setEnabled(status.active());
     }
 
     private void redeploySelected() {

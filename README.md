@@ -107,6 +107,16 @@ Maven builds use IntelliJ's bundled Maven runner and its Maven configuration.
 
 Gradle builds prefer the service's `gradlew` / `gradlew.bat`, walking upward from the selected module. If no wrapper is found, system Gradle is used.
 
+Selected services build sequentially, with progress in the tool window and IDEA's
+background-task indicator. **Cancel Build** stops the owned build process and
+skips queued services. Closing the tool window does not interrupt the batch;
+closing the project cancels it. Only one batch runs per project at a time.
+
+If a deployment has already been submitted, cancellation waits for its result
+and displays **Cancelling after current deployment finishes…**. Explicit build
+modes keep Auto Redeploy suppressed until that result arrives. A failed build or
+deployment stops the queue. Stop in the native Maven console also cancels the batch.
+
 Nested Maven/Gradle projects are discovered recursively (bounded depth) in addition to projects already imported by IntelliJ. Output/vendor directories such as `.git`, `.idea`, `.gradle`, `target`, `build`, `out`, and `node_modules` are skipped. Hierarchy is preserved visually, for example:
 
 ```text

@@ -10,6 +10,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import io.github.wildflycommunityrunner.util.IdeUi;
+import io.github.wildflycommunityrunner.util.ProjectTrust;
 import com.intellij.openapi.util.Key;
 import com.intellij.util.execution.ParametersListUtil;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
@@ -25,32 +26,20 @@ import java.util.function.Consumer;
 public final class GradleBuildService {
     private GradleBuildService() {}
 
-    public static void build(Project project,
-                             ServiceProfile service,
-                             Runnable onSuccess,
-                             Runnable onFailure,
-                             Consumer<String> output) {
-        // Save from an IntelliJ-dispatched EDT callback so document/model writes have the
-        // required write-intent context, then do the expensive Gradle process work in BGT.
-        IdeUi.later(project, () -> {
+    static void build(Project project, ServiceProfile service, BuildOperation operation, Consumer<String> output) {
+        IdeUi.later(project, () -> operation.completion().isDone(), () -> {
             try {
+                if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
                 FileDocumentManager.getInstance().saveAllDocuments();
+                ApplicationManager.getApplication().executeOnPooledThread(() -> doBuild(project, service, operation, output));
             } catch (ProcessCanceledException cancelled) {
+                operation.failed(cancelled);
                 throw cancelled;
-            } catch (Exception e) {
-                output.accept("ERROR saving documents before Gradle build: " + e.getMessage());
-                if (onFailure != null) onFailure.run();
-                return;
-            }
-            ApplicationManager.getApplication().executeOnPooledThread(() -> doBuild(project, service, onSuccess, onFailure, output));
+            } catch (Exception error) { operation.failed(error); }
         });
     }
 
-    private static void doBuild(Project project,
-                                ServiceProfile service,
-                                Runnable onSuccess,
-                                Runnable onFailure,
-                                Consumer<String> output) {
+    private static void doBuild(Project project, ServiceProfile service, BuildOperation operation, Consumer<String> output) {
         try {
             Path buildFile = resolveBuildFile(project, service);
             Path moduleDir = buildFile.getParent();
@@ -84,9 +73,12 @@ public final class GradleBuildService {
             GeneralCommandLine commandLine = new GeneralCommandLine(command)
                     .withWorkingDirectory(moduleDir)
                     .withCharset(StandardCharsets.UTF_8);
+            if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
+            if (!operation.beginLaunch()) return;
             KillableProcessHandler handler = new KillableProcessHandler(commandLine);
             handler.setShouldKillProcessSoftly(false);
-            handler.addProcessListener(new ProcessListener() {
+            operation.bind(handler);
+            ProcessListener outputListener = new ProcessListener() {
                 @Override
                 @SuppressWarnings("rawtypes")
                 public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
@@ -95,24 +87,14 @@ public final class GradleBuildService {
                     output.accept(ProcessOutputType.isStderr(outputType) ? "[gradle stderr] " + text : text);
                 }
 
-                @Override
-                public void processTerminated(@NotNull ProcessEvent event) {
-                    if (event.getExitCode() == 0) {
-                        output.accept("Build succeeded: " + service.name);
-                        if (onSuccess != null) onSuccess.run();
-                    } else {
-                        output.accept("BUILD FAILED: " + service.name + " (exit " + event.getExitCode() + ")");
-                        if (onFailure != null) onFailure.run();
-                    }
-                }
-            });
+            };
+            handler.addProcessListener(outputListener);
+            operation.onFinished(() -> handler.removeProcessListener(outputListener));
             handler.startNotify();
         } catch (ProcessCanceledException cancelled) {
+            operation.failed(cancelled);
             throw cancelled;
-        } catch (Exception e) {
-            output.accept("ERROR: " + e.getMessage());
-            if (onFailure != null) onFailure.run();
-        }
+        } catch (Exception error) { operation.failed(error); }
     }
 
     public static Path resolveBuildFile(Project project, ServiceProfile service) {

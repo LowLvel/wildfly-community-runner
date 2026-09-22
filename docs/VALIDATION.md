@@ -67,8 +67,8 @@ These tests do not replace testing against a running WildFly server.
 3. Native Run/Debug configurations — passed [35721351298](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35721351298): 32 plugin tests on three operating systems and all six verifier targets. A report-upload failure passed on retry; the compatibility check itself passed on both attempts.
 4. Notifications, threading boundaries, and error handling — passed [35725003648](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35725003648): 48 plugin tests and five CI-helper tests on all three operating systems, plus all six verifier targets.
 5. Server detection — passed [35729937907](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35729937907): 67 plugin tests on all three operating systems and all six verifier targets. Includes exact process identity, managed-instance aliases, occupied-port rejection, Windows CIM/quoting, and an actual child-JVM detection fixture. The fixture emulates launcher arguments; it does not start a WildFly server.
-6. Onboarding (in progress): environment home validation, first-use discovery, preserved user edits and legacy settings, Safe Mode, and saved watcher initialization without a tool window.
-7. Build lifecycle and cancellation.
+6. Onboarding — passed [35734948228](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35734948228): 77 plugin tests on three operating systems and all six verifier targets. Covers environment home validation, first-use discovery, preserved user edits and legacy settings, Safe Mode, and saved watcher initialization without a tool window. The initial 2025.1 job passed on retry after a Maven Central HTTP 429 download failure.
+7. Build lifecycle and cancellation (in progress): project-owned batches, native progress, cancellation before/during launch, exact Maven environment ownership, fast exits, and suppression through deployment.
 8. Artifact watcher hardening.
 9. Settings migration and stale registry cleanup.
 10. Sensitive JVM properties.
