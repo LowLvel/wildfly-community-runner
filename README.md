@@ -1,0 +1,137 @@
+# WildFly Community Runner
+
+Local WildFly integration for IntelliJ IDEA Community, optimized for multi-service Maven/Gradle development.
+
+## UI
+
+The **WildFly** tool window has two tabs:
+
+- **Services** — server controls, project services, external WildFly deployments, and contextual service actions.
+- **Logs** — Maven/Gradle output, deployment activity, WildFly process output, and a `server.log` shortcut.
+
+Server controls are deliberately compact: Start, Debug, Stop, and a chevron menu. The menu contains debugger attach, server-profile management, `standalone.xml`, WildFly Home, deployments, and `server.log`.
+
+The service list uses IntelliJ's collection toolbar for Add/Edit/Remove/Discover. Shift-click selects a range and Ctrl/Cmd-click toggles individual rows. Services are sorted lexicographically by their hierarchy-aware display name.
+
+## Project services
+
+Each configured service stores:
+
+- Maven or Gradle build file.
+- Build goals/tasks, arguments, and JVM options.
+- WAR/EAR/JAR artifact configuration.
+- Stable WildFly deployment name.
+- Optional browser context path.
+- **Auto Redeploy** — watches the final WAR/EAR/JAR. Any rebuild of that artifact can trigger redeploy, including builds started from IntelliJ's Maven/Gradle tool windows or a terminal.
+
+The first table column is **Auto**, not a selection/bulk flag. Selection is temporary action scope; Auto Redeploy is persistent behavior. Multi-select and the context menu can enable/disable Auto Redeploy for several services at once.
+
+Actions:
+
+- **Build** — runs the build. If Auto is enabled, the artifact watcher handles redeploy when the output file changes.
+- **Build and Deploy** — always deploys after a successful build and temporarily suppresses the watcher to prevent duplicate redeploys.
+- **Build without Deploy** — never deploys and temporarily suppresses the watcher.
+- **Redeploy** — deploys the latest built artifact.
+- **Undeploy**.
+- **Open in Browser**.
+
+## External deployments
+
+If the selected WildFly has active deployments that are not configured in the current IntelliJ project, they appear in a separate **External deployments** section beneath the project-service list.
+
+The plugin keeps an application-wide registry of service source paths. If an external deployment was previously associated with a Maven/Gradle project, it can still be built and redeployed from another IntelliJ project window. Unknown deployments can use **Associate Source…** to pick their build file, and remembered external services can be added to the current project with one action.
+
+External deployments support redeploy, undeploy, browser launch, and — when a remembered source exists — build/source/artifact actions.
+
+## Deployment status
+
+The UI intentionally exposes only four current states:
+
+- **Deployed**
+- **Deploying**
+- **Failed**
+- **Not deployed**
+
+Historical scanner markers such as `.undeployed` are not shown as separate persistent states. Status colors reuse IntelliJ's theme-aware success/warning/failure palette. Hover a deployment status to see the last successful deployment time, taken from WildFly's `.deployed` marker.
+
+## Browser launch
+
+**Open in Browser** uses the selected server's host and configurable HTTP port (default `8080`). If a service has a browser context-path override, that is used. Otherwise the context is derived from the deployment name, e.g. `orders.war` -> `http://localhost:8080/orders/`.
+
+For unusual deployments where the WildFly context root differs from the WAR name, set **Browser context path** in Service Details.
+
+## Server lifecycle across projects
+
+WildFly server profiles are application-wide. A WildFly process started by the plugin is managed application-wide too, so opening another IntelliJ project does not start a duplicate instance. New projects reuse the last/active profile and can stop the managed process.
+
+If a server is already listening on the configured HTTP host/port but was not launched by the current IDE process, it is shown as **Detected running** and reused for deployment/browser/debug-attach actions instead of spawning another WildFly.
+
+For local detected servers, Stop can force-stop only when the plugin can uniquely identify a WildFly JVM whose command line matches the configured WildFly Home. Ambiguous or remote processes are never killed automatically.
+
+## WildFly profiles
+
+Each profile supports:
+
+- WildFly Home and `standalone*.xml`.
+- Java Home.
+- Host and HTTP port.
+- Configurable debug port (default `8787`).
+- Startup arguments.
+- WildFly JVM options.
+- JVM-option shortcuts/path pickers including Oracle `-Doracle.net.tns_admin=...`, trust store, key store, temp directory, and custom options.
+
+## Maven and Gradle
+
+Maven builds use IntelliJ's bundled Maven runner and its Maven configuration.
+
+Gradle builds prefer the service's `gradlew` / `gradlew.bat`, walking upward from the selected module. If no wrapper is found, system Gradle is used.
+
+Nested Maven/Gradle projects are discovered recursively (bounded depth) in addition to projects already imported by IntelliJ. Output/vendor directories such as `.git`, `.idea`, `.gradle`, `target`, `build`, `out`, and `node_modules` are skipped. Hierarchy is preserved visually, for example:
+
+```text
+backend › billing › api  —  billing-api
+backend › orders › api   —  orders-api
+```
+
+## Auto Redeploy artifact watcher
+
+Auto Redeploy is event-driven rather than a polling loop. The plugin registers the service output directory with Java's `WatchService` (`target/`, `build/libs/`, or the parent of an explicit artifact override). Source files are not watched.
+
+When the final WAR/EAR/JAR changes, events are debounced and the artifact size/mtime are sampled until stable before deployment. This means Maven builds started from IntelliJ's Maven tab, Gradle builds, terminal builds, and plugin builds can all trigger the same Auto Redeploy behavior. Explicit **Build and Deploy** / **Build without Deploy** actions temporarily suppress the watcher so they do not cause duplicate or unwanted redeploys.
+
+Resource usage is intentionally small: one blocking watcher thread and one lightweight scheduled worker per IntelliJ project that has Auto-enabled services; there is no periodic scan of service trees.
+
+## Deployment / hot redeploy
+
+Deployments use WildFly's standalone deployment scanner. Built artifacts are copied to a temporary file, atomically replaced when possible, and then `.dodeploy` is created. Only the selected service is touched; other deployments remain running.
+
+**Undeploy** handles project services and external deployments identically. For an active deployment it first removes WildFly's `.deployed` marker (the deployment-scanner undeploy command), waits briefly for scanner confirmation, then removes the scanner-managed artifact copy and residual markers from `standalone/deployments`. Failed, pending, or artifact-only external deployments are cleaned up as well, so they cannot remain as stale scanner candidates. Source artifacts under Maven `target/` or Gradle `build/libs/` are never deleted.
+
+External deployments without an associated source can still be redeployed by re-triggering `.dodeploy` on the artifact already present in `standalone/deployments`.
+
+## Debugging
+
+**Debug** starts WildFly with `--debug <configured-port>` when the server is stopped, then attaches IntelliJ's debugger. If a server is already detected externally, the plugin does not restart it; it attempts to attach to the configured debug port.
+
+## IntelliJ threading
+
+Maven launch/document saving is dispatched through IntelliJ's application queue. Gradle process work, server detection, recursive discovery, deployment scanning, and other potentially blocking operations are kept off the Swing EDT where appropriate.
+
+## Build
+
+Requirements: JDK 21 and Gradle 9+.
+
+```bash
+gradle verifyPluginProjectConfiguration
+gradle buildPlugin
+```
+
+The installable ZIP is generated under `build/distributions/`. The included GitHub Actions workflow builds and uploads it on pushes to `main`.
+
+## Scope
+
+Current scope is local WildFly **standalone mode**. Domain mode and remote deployment-management APIs are intentionally out of scope.
+
+## License
+
+Apache-2.0
