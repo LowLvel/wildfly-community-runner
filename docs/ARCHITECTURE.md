@@ -116,8 +116,9 @@ The public `RunConfigurationExtension` refreshes Maven arguments for each execut
 `MavenSecretSessions` binds cleanup to the unique file path in the process command,
 which also supports concurrent reruns without changing serialized settings. Pending
 files from launches without a handler are released at project disposal. Gradle gets
-`org.gradle.jvmargs` through a second client argument file passed in `JAVA_OPTS`,
-avoiding nested cmd.exe quoting, and uses a single-use daemon. WildFly keeps nonsensitive
+`org.gradle.jvmargs` through a second client argument file passed in `GRADLE_OPTS`,
+avoiding nested cmd.exe quoting, and uses a single-use daemon. Earlier CLI and
+environment JVM overrides cannot replace the service profile's configured options. WildFly keeps nonsensitive
 server identity properties visible to its launcher and the process detector.
 Process cleanup holds the already-created credential service instead of looking
 up services during container disposal. `SecretRedactor.Lines` buffers bounded

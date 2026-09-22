@@ -72,7 +72,13 @@ public final class GradleBuildService {
             var launcherOptions = options.containsSecrets() ? secrets.prepareGradleLauncher(options) : null;
             operation.onFinished(() -> secrets.release(launcherOptions));
             if (launcherOptions == null && !options.options().isBlank()) command.add("-Dorg.gradle.jvmargs=" + options.options());
-            if (options.containsSecrets()) command.add("--no-daemon");
+            if (options.containsSecrets()) {
+                int firstArgument = windows ? 4 : 1;
+                List<String> retained = GradleJvmArguments.withoutJvmOverrides(command.subList(firstArgument, command.size()));
+                command.subList(firstArgument, command.size()).clear();
+                command.addAll(retained);
+                command.add("--no-daemon");
+            }
 
             int taskStart = windows ? 4 : 1;
             output.accept("Building " + service.name + " — Gradle " + String.join(" ", command.subList(taskStart, command.size())));
@@ -81,8 +87,8 @@ public final class GradleBuildService {
                     .withWorkingDirectory(moduleDir)
                     .withCharset(StandardCharsets.UTF_8);
             if (launcherOptions != null) {
-                String inherited = System.getenv("JAVA_OPTS");
-                commandLine.withEnvironment("JAVA_OPTS", ((inherited == null ? "" : inherited) + " " + launcherOptions.options()).trim());
+                String inherited = System.getenv("GRADLE_OPTS");
+                commandLine.withEnvironment("GRADLE_OPTS", ((inherited == null ? "" : inherited) + " " + launcherOptions.options()).trim());
             }
             if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
             if (!operation.beginLaunch()) return;

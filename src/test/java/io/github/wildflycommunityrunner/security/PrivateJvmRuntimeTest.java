@@ -71,7 +71,10 @@ public class PrivateJvmRuntimeTest {
         var builder = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
         builder.environment().put("EXPECTED_TEST_SECRET", expected);
         builder.environment().put("GRADLE_USER_HOME", directory.resolve("gradle-user-home").toString());
-        if (launcherOptions != null) builder.environment().put("JAVA_OPTS", launcherOptions);
+        if (launcherOptions != null) {
+            builder.environment().put("JAVA_OPTS", "-Dorg.gradle.jvmargs=-Xmx96m");
+            builder.environment().put("GRADLE_OPTS", "-Dorg.gradle.jvmargs=-Xmx128m " + launcherOptions);
+        }
         Process process = builder.start();
         try {
             assertTrue("Child JVM timed out", process.waitFor(timeout, TimeUnit.SECONDS));

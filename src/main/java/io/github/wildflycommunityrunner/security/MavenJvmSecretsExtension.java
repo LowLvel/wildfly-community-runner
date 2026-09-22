@@ -38,7 +38,7 @@ public final class MavenJvmSecretsExtension extends RunConfigurationExtension {
 
     @Override protected void attachToProcess(@NotNull RunConfigurationBase<?> configuration,
             @NotNull ProcessHandler handler, @Nullable RunnerSettings runnerSettings) {
-        if (handler instanceof OSProcessHandler process) {
+        if (!configuration.getProject().isDisposed() && handler instanceof OSProcessHandler process) {
             configuration.getProject().getService(MavenSecretSessions.class).attach(handler, process.getCommandLine());
         }
     }
