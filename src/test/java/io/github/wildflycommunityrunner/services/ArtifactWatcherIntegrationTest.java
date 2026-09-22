@@ -59,7 +59,7 @@ public class ArtifactWatcherIntegrationTest extends BasePlatformTestCase {
             while (!condition.getAsBoolean() && System.nanoTime() < deadline) Thread.sleep(20);
             return condition.getAsBoolean();
         }).get(20, TimeUnit.SECONDS);
-        assertTrue(String.join("\n", output), success);
+        assertTrue(String.join("\n", output) + "\n" + watcher.diagnosticState(), success);
     }
     private Path request() { return target.resolveSibling("api.war.dodeploy"); }
     private void confirm(int count) throws Exception {

@@ -31,6 +31,7 @@ public final class ArtifactAutoDeployService implements Disposable {
         boolean dirty;
         int retries;
         ArtifactFingerprint failed;
+        volatile String lastCheck = "Waiting for output event";
         Slot(ServiceProfile service, ServerProfile server, Path module, Path source, long generation) {
             this.service = service; this.server = server; this.module = module; this.source = source; this.generation = generation;
         }
@@ -47,6 +48,7 @@ public final class ArtifactAutoDeployService implements Disposable {
     private volatile boolean disposed;
     private ScheduledFuture<?> restart;
     private int registrationFailures;
+    private volatile String lastEvent = "none";
 
     public ArtifactAutoDeployService(Project project) { this.project = project; }
     public static ArtifactAutoDeployService getInstance(Project project) { return project.getService(ArtifactAutoDeployService.class); }
@@ -145,6 +147,8 @@ public final class ArtifactAutoDeployService implements Disposable {
                 boolean refresh = false;
                 for (WatchEvent<?> event : key.pollEvents()) {
                     Path relative = event.context() instanceof Path path ? path : null;
+                    lastEvent = event.kind().name() + " " + event.context() + " ("
+                            + (event.context() == null ? "null" : event.context().getClass().getName()) + ") on " + key.watchable();
                     for (WatchTarget target : registrations.getOrDefault(key, List.of())) {
                         if (event.kind() == StandardWatchEventKinds.OVERFLOW) {
                             schedule(target.slot(), DEBOUNCE_MS, true); refresh = true;
@@ -215,8 +219,12 @@ public final class ArtifactAutoDeployService implements Disposable {
         DeploymentCoordinator.AutoLease lease = null;
         try {
             var coordinator = DeploymentCoordinator.getInstance();
-            if (slot.server == null || !ProjectTrust.isTrusted(project) || coordinator.suppressed(slot.source, null)) return;
-            if (!WildFlyProcessService.getInstance().isDetectedRunning(slot.server)) return;
+            slot.lastCheck = "Checking server and trust";
+            if (slot.server == null) { slot.lastCheck = "No server"; return; }
+            if (!ProjectTrust.isTrusted(project)) { slot.lastCheck = "Untrusted project"; return; }
+            if (coordinator.suppressed(slot.source, null)) { slot.lastCheck = "Suppressed source"; return; }
+            if (!WildFlyProcessService.getInstance().isDetectedRunning(slot.server)) { slot.lastCheck = "Server not running"; return; }
+            slot.lastCheck = "Waiting for stable archive";
             Path artifact = ArtifactLocator.resolveInModule(slot.module, slot.service);
             ArtifactFingerprint fingerprint = ArtifactFingerprint.stable(artifact, () -> !current(slot));
             if (fingerprint == null) { retry = true; return; }
@@ -246,6 +254,7 @@ public final class ArtifactAutoDeployService implements Disposable {
             }
         } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         catch (IOException error) {
+            slot.lastCheck = PluginNotifications.message(error);
             retry = true;
             if (slot.retries >= 9) out("Auto Redeploy skipped " + slot.service.name + ": " + PluginNotifications.message(error));
         } catch (Exception error) { out("Auto Redeploy skipped " + slot.service.name + ": " + PluginNotifications.message(error)); }
@@ -264,6 +273,11 @@ public final class ArtifactAutoDeployService implements Disposable {
         else if (retry && slot.retries++ < 10) schedule(slot, 1000, false);
     }
     private void out(String message) { if (!disposed) output.accept(message); }
+    synchronized String diagnosticState() {
+        return "disposed=" + disposed + ", generation=" + generation + ", watch=" + (watchService != null)
+                + ", workers stopped=" + watcher.isShutdown() + "/" + scheduler.isShutdown() + ", last event=" + lastEvent + ", slots=" + slots.values().stream()
+                .map(slot -> slot.source + " [ticket=" + slot.ticket + ", active=" + slot.active + ", " + slot.lastCheck + "]").toList();
+    }
     private static ThreadFactory daemonFactory(String name) {
         return runnable -> { var thread = new Thread(runnable, name); thread.setDaemon(true); return thread; };
     }
