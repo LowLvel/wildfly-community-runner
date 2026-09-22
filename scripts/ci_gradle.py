@@ -1,5 +1,6 @@
 """Run CI checks, retrying only JetBrains' pre-task layout-index race (#2192)."""
 from pathlib import Path
+import os
 import subprocess
 import sys
 
@@ -27,9 +28,14 @@ def clear_layout_index(root):
                 path.unlink()
 
 
+def gradle_command(arguments, windows):
+    launcher = ["cmd.exe", "/d", "/c", "gradlew.bat"] if windows else ["bash", "./gradlew"]
+    return [*launcher, "--no-daemon", "--console=plain", *arguments]
+
+
 def run_gradle(arguments):
     process = subprocess.Popen(
-        ["bash", "./gradlew", "--no-daemon", "--console=plain", *arguments],
+        gradle_command(arguments, os.name == "nt"),
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace",
     )

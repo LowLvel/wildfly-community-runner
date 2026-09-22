@@ -8,6 +8,13 @@ RACE = "java.nio.file.ClosedFileSystemException\nCould not find bundled plugin w
 
 
 class RetryPolicyTest(unittest.TestCase):
+    def test_windows_uses_native_wrapper_without_resolving_wsl_bash(self):
+        args = ["test", "-PverifierIde=IC-2025.1"]
+        command = ci_gradle.gradle_command(args, windows=True)
+        self.assertEqual(["cmd.exe", "/d", "/c", "gradlew.bat"], command[:4])
+        self.assertEqual(args, command[-2:])
+        self.assertEqual(["bash", "./gradlew"], ci_gradle.gradle_command(args, windows=False)[:2])
+
     def test_does_not_retry_compiler_tests_or_verifier_failures(self):
         for output in ["Compilation failed", "Test failed", "Compatibility problems", "> Task :test\n" + RACE]:
             with self.subTest(output=output), patch.object(ci_gradle, "run_gradle", return_value=(1, output)) as run:
