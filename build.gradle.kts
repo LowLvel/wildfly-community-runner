@@ -1,4 +1,5 @@
 import org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 
 plugins {
     java
@@ -20,7 +21,9 @@ dependencies {
         intellijIdeaCommunity(providers.gradleProperty("platformVersion"))
         bundledPlugin("org.jetbrains.idea.maven")
         bundledPlugin("com.intellij.java")
+        testFramework(TestFrameworkType.Platform)
     }
+    testImplementation("junit:junit:4.13.2")
 }
 
 java {
@@ -61,6 +64,13 @@ intellijPlatform {
 }
 
 tasks {
+    test {
+        useJUnit()
+        testLogging {
+            events("passed", "skipped", "failed")
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+        }
+    }
     withType<JavaCompile> {
         options.encoding = "UTF-8"
         options.release.set(21)

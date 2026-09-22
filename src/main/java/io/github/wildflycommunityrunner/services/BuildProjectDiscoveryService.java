@@ -121,7 +121,8 @@ public final class BuildProjectDiscoveryService {
         return roots;
     }
 
-    private static void scanRecursively(Path root,
+    // Package boundary also permits filesystem regression tests without starting an IDE.
+    static void scanRecursively(Path root,
                                         Path projectBase,
                                         Map<String, BuildProjectChoice> out) {
         if (root == null || !Files.isDirectory(root)) return;

@@ -32,8 +32,13 @@ non-extendable APIs, missing dependencies, and invalid plugins block the build.
 Warnings and deprecations remain in the reports for review. They must be assessed
 before releasing; binary verification cannot prove runtime threading safety.
 
-The imported 0.5.2 archive has no automated test sources. Until the test stage is
-implemented, `test NO-SOURCE` is not a passing regression suite.
+The imported 0.5.2 archive had no automated test sources. The regression suite now
+exercises nested Maven/Gradle discovery, XML entity rejection, final artifact
+selection and overrides, scanner status/timestamps/cleanup, legacy migration,
+global source registry copies, and IntelliJ service registration/write intent.
+Filesystem tests use temporary directories; platform tests boot an IntelliJ test
+application. CI fails if no regression tests execute and retains JUnit XML/HTML.
+These tests do not replace testing against a running WildFly server.
 
 ## Baseline evidence
 
@@ -50,8 +55,8 @@ implemented, `test NO-SOURCE` is not a passing regression suite.
 
 ## Ordered readiness work
 
-1. Plugin Verifier and multiple-version CI (in progress).
-2. Automated behavior and platform integration tests.
+1. Plugin Verifier and multiple-version CI — passed [35715308965](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35715308965): three operating systems and six IDE targets.
+2. Automated behavior and platform integration tests (validation in progress).
 3. Native Run/Debug configurations.
 4. Notifications and error handling.
 5. Server detection.
