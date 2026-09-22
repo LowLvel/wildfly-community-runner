@@ -2,6 +2,7 @@ package io.github.wildflycommunityrunner.run;
 
 import com.intellij.execution.ExecutionResult;
 import com.intellij.execution.ExecutionManager;
+import com.intellij.execution.ExecutionListener;
 import com.intellij.execution.configurations.ConfigurationTypeUtil;
 import com.intellij.execution.configurations.RemoteState;
 import com.intellij.execution.executors.DefaultDebugExecutor;
@@ -10,6 +11,10 @@ import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessListener;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
+import com.intellij.execution.runners.ExecutionEnvironment;
+import com.intellij.execution.runners.ProgramRunner;
+import com.intellij.execution.ui.RunContentDescriptor;
+import org.jetbrains.idea.maven.execution.MavenRunConfiguration;
 import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.Key;
@@ -50,7 +55,23 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
         var watcher = ArtifactAutoDeployService.getInstance(getProject());
         var processes = WildFlyProcessService.getInstance();
         var contentManager = ExecutionManager.getInstance(getProject()).getContentManager();
-        var originalDescriptors = List.copyOf(contentManager.getAllDescriptors());
+        var buildDescriptors = new CopyOnWriteArrayList<RunContentDescriptor>();
+        var builds = getProject().getMessageBus().connect(getTestRootDisposable());
+        builds.subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
+            @Override public void processStartScheduled(String executorId, ExecutionEnvironment environment) {
+                if (!(environment.getRunProfile() instanceof MavenRunConfiguration)) return;
+                ProgramRunner.Callback original = environment.getCallback();
+                environment.setCallback(new ProgramRunner.Callback() {
+                    @Override public void processStarted(RunContentDescriptor descriptor) {
+                        buildDescriptors.add(descriptor);
+                        if (original != null) original.processStarted(descriptor);
+                    }
+                    @Override public void processNotStarted(Throwable cause) {
+                        if (original != null) original.processNotStarted(cause);
+                    }
+                });
+            }
+        });
         var originalJdks = List.of(com.intellij.openapi.projectRoots.ProjectJdkTable.getInstance().getAllJdks());
         try {
             background(() -> {
@@ -155,15 +176,17 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             await(debug::isProcessTerminated, Duration.ofSeconds(30), "Debug owner Stop did not finish");
             background(() -> { waitStopped(server); return null; });
         } finally {
+            builds.disconnect();
             getProject().getService(BuildLifecycleService.class).cancel();
-            for (var descriptor : List.copyOf(contentManager.getAllDescriptors())) {
-                if (originalDescriptors.contains(descriptor)) continue;
+            // Headless Maven consoles are not necessarily registered in RunContentManager.
+            for (var descriptor : buildDescriptors) {
                 var handler = descriptor.getProcessHandler();
                 if (handler != null && !handler.isProcessTerminated()) {
                     handler.destroyProcess();
                     await(handler::isProcessTerminated, Duration.ofSeconds(30), "Application build cleanup timed out");
                 }
-                contentManager.removeRunContent(DefaultRunExecutor.getRunExecutorInstance(), descriptor);
+                if (contentManager.getAllDescriptors().contains(descriptor))
+                    contentManager.removeRunContent(DefaultRunExecutor.getRunExecutorInstance(), descriptor);
                 if (!Disposer.isDisposed(descriptor)) Disposer.dispose(descriptor);
             }
             background(() -> { watcher.configure(List.of(), server, output::add); processes.terminate(server, output::add); return null; });
