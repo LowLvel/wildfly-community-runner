@@ -8,7 +8,6 @@ import io.github.wildflycommunityrunner.services.BuildService;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -39,7 +38,7 @@ public final class ArtifactLocator {
 
         String expected = normalizePackaging(service.packaging);
         for (Path outputDir : outputDirs) {
-            Path artifact = newestDeployable(outputDir, expected);
+            Path artifact = unambiguousDeployable(outputDir, expected);
             if (artifact != null) return artifact;
         }
 
@@ -57,17 +56,24 @@ public final class ArtifactLocator {
         return safeName + "." + (extension.isBlank() ? "war" : extension);
     }
 
-    private static Path newestDeployable(Path dir, String expectedPackaging) throws IOException {
+    private static Path unambiguousDeployable(Path dir, String expectedPackaging) throws IOException {
         if (!Files.isDirectory(dir)) return null;
         try (Stream<Path> paths = Files.list(dir)) {
-            return paths
+            List<Path> candidates = paths
                     .filter(Files::isRegularFile)
                     .filter(p -> isDeployable(p, expectedPackaging))
-                    .filter(p -> !p.getFileName().toString().startsWith("original-"))
-                    .filter(p -> !p.getFileName().toString().endsWith("-plain.jar"))
-                    .max(Comparator.comparingLong(ArtifactLocator::lastModified))
-                    .orElse(null);
+                    .filter(p -> !auxiliaryArchive(p.getFileName().toString()))
+                    .sorted().toList();
+            if (candidates.size() > 1) throw new IOException("Multiple deployment artifacts in " + dir + ": "
+                    + candidates.stream().map(p -> p.getFileName().toString()).toList()
+                    + ". Select the application with Artifact override; modification time is not a safe choice.");
+            return candidates.isEmpty() ? null : candidates.getFirst();
         }
+    }
+
+    public static boolean auxiliaryArchive(String name) {
+        String lower = name.toLowerCase(Locale.ROOT);
+        return lower.startsWith("original-") || lower.matches(".*-(sources|javadoc|tests|test|test-fixtures|plain)\\.jar");
     }
 
     private static void validateArtifact(Path path) throws IOException {
@@ -92,11 +98,4 @@ public final class ArtifactLocator {
         return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(Locale.ROOT);
     }
 
-    private static long lastModified(Path p) {
-        try {
-            return Files.getLastModifiedTime(p).toMillis();
-        } catch (IOException e) {
-            return 0L;
-        }
-    }
 }

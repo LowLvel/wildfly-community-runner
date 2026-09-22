@@ -293,6 +293,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                     }
                     @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
                 })
+                .addExtraAction(new DumbAwareAction("Shared Project Settings", "Save or reload .wildfly/services.xml", AllIcons.Actions.MenuSaveall) {
+                    @Override public void actionPerformed(AnActionEvent e) { onUi(WildFlyManagerPanel.this::sharedProjectSettings); }
+                    @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
+                })
                 .createPanel();
 
         JPanel workspace = new JPanel(new BorderLayout(4, 4));
@@ -301,7 +305,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         JPanel externalHeader = new JPanel(new BorderLayout(4, 0));
         JLabel externalTitle = new JLabel("External deployments");
         externalTitle.setFont(externalTitle.getFont().deriveFont(Font.BOLD));
-        JLabel externalHint = new JLabel("Running on this WildFly, not in this IntelliJ project");
+        JLabel externalHint = new JLabel("Scanner deployments outside this project's service list");
         externalHint.setForeground(UIManager.getColor("Label.disabledForeground"));
         externalHeader.add(externalTitle, BorderLayout.WEST);
         externalHeader.add(externalHint, BorderLayout.EAST);
@@ -393,14 +397,14 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         selectionLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
         bar.add(selectionLabel, BorderLayout.CENTER);
 
-        JButton build = new JButton("Build", AllIcons.Actions.Compile);
-        build.setToolTipText("Build selected services. Auto-enabled services redeploy when their built artifact changes.");
+        JButton build = new JButton("Build and Deploy", AllIcons.Actions.Compile);
+        build.setToolTipText("Build and deploy the selected applications. Use Build Only to suppress Auto Redeploy for this build.");
         JButton redeploy = iconButton(AllIcons.Actions.Restart, "Redeploy selected service(s)");
         JButton browser = iconButton(AllIcons.Actions.Forward, "Open selected service in browser");
 
         JPopupMenu moreMenu = new JPopupMenu();
         JMenuItem buildDeploy = new JMenuItem("Build and Deploy", AllIcons.Actions.Compile);
-        JMenuItem buildOnly = new JMenuItem("Build without Deploy");
+        JMenuItem buildOnly = new JMenuItem("Build Only");
         JMenuItem undeploy = new JMenuItem("Undeploy", AllIcons.Actions.Cancel);
         JMenuItem autoOn = new JMenuItem("Enable Auto Redeploy");
         JMenuItem autoOff = new JMenuItem("Disable Auto Redeploy");
@@ -442,7 +446,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         JPanel actions = compactToolbar(build, redeploy, browser, more);
         bar.add(actions, BorderLayout.EAST);
 
-        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.AUTO)));
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.FORCE_DEPLOY)));
         redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
         browser.addActionListener(e -> onUi(() -> openSelectedInBrowser()));
         buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.FORCE_DEPLOY)));
@@ -507,9 +511,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
 
     private JPopupMenu projectContextMenu() {
         JPopupMenu menu = new JPopupMenu();
-        JMenuItem build = new JMenuItem("Build", AllIcons.Actions.Compile);
+        JMenuItem build = new JMenuItem("Build Only", AllIcons.Actions.Compile);
         JMenuItem buildDeploy = new JMenuItem("Build and Deploy");
-        JMenuItem buildOnly = new JMenuItem("Build without Deploy");
+        JMenuItem buildOnly = new JMenuItem("Build Only");
         JMenuItem redeploy = new JMenuItem("Redeploy", AllIcons.Actions.Restart);
         JMenuItem undeploy = new JMenuItem("Undeploy", AllIcons.Actions.Cancel);
         JMenuItem browser = new JMenuItem("Open in Browser", AllIcons.Actions.Forward);
@@ -519,10 +523,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         JMenuItem module = new JMenuItem("Open module folder");
         JMenuItem artifact = new JMenuItem("Show built artifact");
         JMenuItem remove = new JMenuItem("Remove service profile…");
-        menu.add(build); menu.add(buildDeploy); menu.add(buildOnly); menu.add(redeploy); menu.add(undeploy); menu.add(browser);
+        menu.add(buildDeploy); menu.add(buildOnly); menu.add(redeploy); menu.add(undeploy); menu.add(browser);
         menu.addSeparator(); menu.add(autoOn); menu.add(autoOff); menu.add(edit);
         menu.addSeparator(); menu.add(module); menu.add(artifact); menu.add(remove);
-        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.AUTO)));
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.BUILD_ONLY)));
         buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.FORCE_DEPLOY)));
         buildOnly.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.BUILD_ONLY)));
         redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
@@ -546,7 +550,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         boolean single = selected.size() == 1;
         boolean allKnown = !selected.isEmpty() && selected.stream().allMatch(x -> x.source() != null);
         JPopupMenu menu = new JPopupMenu();
-        JMenuItem build = new JMenuItem("Build", AllIcons.Actions.Compile);
+        JMenuItem build = new JMenuItem("Build Only", AllIcons.Actions.Compile);
         JMenuItem buildDeploy = new JMenuItem("Build and Deploy");
         JMenuItem redeploy = new JMenuItem("Redeploy", AllIcons.Actions.Restart);
         JMenuItem undeploy = new JMenuItem("Undeploy", AllIcons.Actions.Cancel);
@@ -565,7 +569,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         addToProject.setEnabled(single && selected.get(0).source() != null);
         module.setEnabled(single && selected.get(0).source() != null);
         artifact.setEnabled(single && selected.get(0).source() != null);
-        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.AUTO)));
+        build.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.BUILD_ONLY)));
         buildDeploy.addActionListener(e -> onUi(() -> buildSelected(BuildBatch.Mode.FORCE_DEPLOY)));
         redeploy.addActionListener(e -> onUi(() -> redeploySelected()));
         undeploy.addActionListener(e -> onUi(() -> undeploySelected()));
@@ -665,6 +669,30 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         });
     }
 
+    private void sharedProjectSettings() {
+        if (project.getBasePath() == null) return;
+        int action = JOptionPane.showOptionDialog(this,
+                "Save portable deployment settings to .wildfly/services.xml, or reload that file?\nSaving replaces its contents. JDK paths, JVM options and Auto Redeploy stay local.",
+                "Shared Project Settings", JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null,
+                new String[]{"Save Project Settings", "Reload Project Settings", "Cancel"}, "Cancel");
+        if (action != 0 && action != 1) return;
+        var services = projectState().services.stream().map(ServiceProfile::new).toList();
+        Path base = Path.of(project.getBasePath());
+        background("Shared settings failed", () -> {
+            if (action == 0) {
+                io.github.wildflycommunityrunner.settings.ProjectDeploymentFile.write(base, services);
+                append("Saved " + base.resolve(io.github.wildflycommunityrunner.settings.ProjectDeploymentFile.LOCATION));
+            } else {
+                var imported = io.github.wildflycommunityrunner.settings.ProjectDeploymentFile.read(base);
+                onUi(() -> {
+                    updateProject(state -> io.github.wildflycommunityrunner.settings.ProjectDeploymentFile.merge(base, state, imported));
+                    refreshServiceTablePreservingSelection();
+                    append("Loaded " + imported.size() + " shared service definitions; local credentials and Auto Redeploy choices were preserved.");
+                });
+            }
+        });
+    }
+
     private void discoverBuildProjects() {
         append("Scanning workspace for Maven/Gradle projects…");
         background("Project discovery failed", () -> {
@@ -674,6 +702,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 List<ServiceProfile> added = new ArrayList<>();
                 updateProject(state -> {
                     for (BuildProjectChoice choice : discovered) {
+                        if (!ProjectSetupService.suggestedApplication(choice)) continue;
                         if (state.services.stream().anyMatch(item -> samePath(item.buildFilePath, choice.buildFilePath()))) continue;
                         ServiceProfile service = ProjectSetupService.discoveredService(choice);
                         state.services.add(service);
@@ -682,13 +711,13 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 });
                 added.forEach(this::rememberService);
                 refreshServiceTablePreservingSelection();
-                append(added.isEmpty() ? "Project services are already in sync." : "Added " + added.size() + " discovered service(s). Auto Redeploy is enabled by default and watches the built artifact directly.");
+                append(added.isEmpty() ? "Project services are already in sync." : "Added " + added.size() + " discovered service(s). Auto Redeploy is off. Enable it explicitly after checking the artifact and server. Add JAR applications manually.");
             });
         });
     }
 
     private void addCustomService() {
-        ServiceProfile draft = new ServiceProfile();
+        ServiceProfile draft = ServiceProfile.create();
         draft.name = "Custom service";
         if (buildChoices.isEmpty()) refreshBuildChoices(false);
         ServiceProfileDialog dialog = new ServiceProfileDialog(project, draft, buildChoices);
@@ -761,8 +790,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         if (!dialog.showAndGet()) return;
         ServiceProfile source = dialog.getProfile();
         source.deploymentName = external.deploymentName();
-        if (external.source() == null) rememberService(source);
-        else WildFlyApplicationSettings.getInstance().replaceKnownService(external.source().id, source);
+        ServerProfile server = requireServer();
+        if (server == null) return;
+        WildFlyApplicationSettings.getInstance().rememberDeployment(server, external.deploymentName(), source);
         refreshExternalDeployments();
         append("Remembered source for external deployment " + external.deploymentName() + ": " + source.buildFilePath);
     }
@@ -810,11 +840,12 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 Map<String, DeploymentStatusView> statuses = new HashMap<>();
                 Set<String> allNames = new LinkedHashSet<>(localNames);
                 allNames.addAll(DeploymentScannerService.listDeployments(server));
+                var serverState = WildFlyProcessService.getInstance().state(server);
                 for (String name : allNames) {
-                    String status = DeploymentScannerService.status(server, name);
+                    String status = DeploymentScannerService.visibleStatus(DeploymentScannerService.status(server, name), serverState);
                     statuses.put(name, new DeploymentStatusView(status, DeploymentScannerService.lastDeployedAt(server, name)));
                     if (!"NOT DEPLOYED".equals(status) && !lowerLocalNames.contains(name.toLowerCase(Locale.ROOT))) {
-                        rows.add(new ExternalDeployment(name, app.findKnownServiceByDeploymentName(name)));
+                        rows.add(new ExternalDeployment(name, app.findDeploymentSource(server, name)));
                     }
                 }
                 rows.sort(Comparator.comparing(ExternalDeployment::deploymentName, String.CASE_INSENSITIVE_ORDER));
@@ -857,6 +888,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private void buildSelected(BuildBatch.Mode mode) {
+        if (mode == BuildBatch.Mode.FORCE_DEPLOY) {
+            try { io.github.wildflycommunityrunner.util.DeploymentNames.requireUnique(projectState().services); }
+            catch (IllegalArgumentException invalid) { append(invalid.getMessage()); return; }
+        }
         boolean externalSelection = selectionSource() == SelectionSource.EXTERNAL;
         List<ServiceProfile> services;
         if (externalSelection) {
@@ -882,6 +917,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private void redeploySelected() {
+        try { io.github.wildflycommunityrunner.util.DeploymentNames.requireUnique(projectState().services); }
+        catch (IllegalArgumentException invalid) { append(invalid.getMessage()); return; }
         ServerProfile server = requireServer();
         if (server == null) return;
         if (selectionSource() == SelectionSource.EXTERNAL) {
@@ -921,6 +958,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
             rememberService(source);
             append("Deploying " + source.name + " as " + name);
             DeploymentScannerService.deploy(project, serverSnapshot, artifact, name, activityOutput, ok -> onUi(() -> {
+                if (ok) WildFlyApplicationSettings.getInstance().rememberDeployment(serverSnapshot, name, source);
                 refreshExternalDeployments();
                 if (ok && completion != null) completion.run();
             }));
@@ -951,34 +989,33 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         if (server == null) return;
         String deploymentName;
         String contextPath = "";
+        String override = "";
         if (selectionSource() == SelectionSource.EXTERNAL) {
             List<ExternalDeployment> selected = selectedExternalDeployments();
             if (selected.size() != 1) { append("Select exactly one service to open in the browser."); return; }
             ExternalDeployment external = selected.get(0);
             deploymentName = external.deploymentName();
-            if (external.source() != null) contextPath = Objects.toString(external.source().contextPath, "");
+            if (external.source() != null) {
+                contextPath = Objects.toString(external.source().contextPath, "");
+                override = Objects.toString(external.source().browserUrl, "");
+            }
         } else {
             List<ServiceProfile> selected = selectedServices();
             if (selected.size() != 1) { append("Select exactly one service to open in the browser."); return; }
             ServiceProfile service = selected.get(0);
             deploymentName = deploymentNameForStatus(service);
             contextPath = Objects.toString(service.contextPath, "");
+            override = Objects.toString(service.browserUrl, "");
         }
-        String url = browserUrl(server, deploymentName, contextPath);
+        String url;
+        try { url = io.github.wildflycommunityrunner.util.BrowserUrls.resolve(server, deploymentName, contextPath, override); }
+        catch (IllegalArgumentException error) { append(error.getMessage()); return; }
         append("Opening " + url);
         BrowserUtil.browse(url);
     }
 
     private static String browserUrl(ServerProfile server, String deploymentName, String configuredContext) {
-        String host = server.host == null || server.host.isBlank() ? "localhost" : server.host.trim();
-        if (host.equals("0.0.0.0") || host.equals("::") || host.equals("::0")) host = "localhost";
-        int port = server.httpPort > 0 ? server.httpPort : 8080;
-        String context = configuredContext == null ? "" : configuredContext.trim();
-        if (context.isBlank()) context = contextFromDeploymentName(deploymentName);
-        if (context.equals("/") || context.equalsIgnoreCase("ROOT")) context = "";
-        while (context.startsWith("/")) context = context.substring(1);
-        while (context.endsWith("/") && !context.isEmpty()) context = context.substring(0, context.length() - 1);
-        return "http://" + host + ":" + port + (context.isEmpty() ? "/" : "/" + context + "/");
+        return io.github.wildflycommunityrunner.util.BrowserUrls.resolve(server, deploymentName, configuredContext, "");
     }
 
     private static String contextFromDeploymentName(String deploymentName) {
@@ -1120,7 +1157,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
 
     private void openDeploymentsFolder() {
         ServerProfile profile = requireServer();
-        if (profile != null) openFolder(WildFlyPaths.deploymentsDir(profile));
+        if (profile != null) background("Cannot locate deployment scanner", () -> openFolder(WildFlyPaths.deploymentsDir(profile)));
     }
 
     private void openSelectedModuleFolder() {
@@ -1357,7 +1394,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private static ServiceProfile serviceDraftForExternal(String deploymentName) {
-        ServiceProfile service = new ServiceProfile();
+        ServiceProfile service = ServiceProfile.create();
         service.name = contextFromDeploymentName(deploymentName);
         if (service.name.isBlank()) service.name = deploymentName;
         service.deploymentName = deploymentName;
@@ -1567,6 +1604,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 case "DEPLOYED" -> "● Deployed";
                 case "FAILED" -> "● Failed";
                 case "DEPLOYING" -> "● Deploying";
+                case "SERVER STOPPED" -> "○ Server stopped";
+                case "UNKNOWN" -> "○ Unknown";
                 default -> "○ Not deployed";
             });
             if (view.deployedAt() != null) {
@@ -1580,7 +1619,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 label.setForeground(switch (state) {
                     case "DEPLOYED" -> JBUI.CurrentTheme.ProgressBar.PASSED;
                     case "FAILED" -> JBUI.CurrentTheme.ProgressBar.FAILED;
-                    case "DEPLOYING" -> JBUI.CurrentTheme.ProgressBar.WARNING;
+                    case "DEPLOYING", "UNKNOWN" -> JBUI.CurrentTheme.ProgressBar.WARNING;
                     default -> table.getForeground();
                 });
             }

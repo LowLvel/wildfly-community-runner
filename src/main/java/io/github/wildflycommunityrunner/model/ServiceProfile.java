@@ -20,6 +20,11 @@ public class ServiceProfile {
     public String artifactPath = "";
     public String deploymentName = "";
     public String contextPath = "";
+    public String browserUrl = "";
+    /** Optional reactor/root build file. Artifact paths still belong to this service's module. */
+    public String buildRootPath = "";
+    /** Optional local JDK for builds, separate from the server JDK. */
+    public String buildJavaHome = "";
     /** Watch the final WAR/EAR/JAR and redeploy whenever the built artifact changes. */
     public boolean deployAfterBuild = true;
 
@@ -30,6 +35,15 @@ public class ServiceProfile {
     public String mavenJvmOptions = "";
 
     public ServiceProfile() {}
+
+    /** Keep constructor defaults for XML files that omitted legacy default values. */
+    public static ServiceProfile create() {
+        ServiceProfile profile = new ServiceProfile();
+        profile.buildTasks = "package";
+        profile.buildArguments = "";
+        profile.deployAfterBuild = false;
+        return profile;
+    }
 
     public ServiceProfile(ServiceProfile other) {
         this.id = other.id;
@@ -44,6 +58,9 @@ public class ServiceProfile {
         this.artifactPath = other.artifactPath;
         this.deploymentName = other.deploymentName;
         this.contextPath = other.contextPath;
+        this.browserUrl = other.browserUrl;
+        this.buildRootPath = other.buildRootPath;
+        this.buildJavaHome = other.buildJavaHome;
         this.deployAfterBuild = other.deployAfterBuild;
         this.pomPath = other.pomPath;
         this.mavenGoals = other.mavenGoals;
@@ -74,7 +91,7 @@ public class ServiceProfile {
     private static boolean blank(String value) { return value == null || value.isBlank(); }
 
     public String defaultTasks() {
-        return buildSystemEnum() == BuildSystem.GRADLE ? "clean build" : "clean package";
+        return buildSystemEnum() == BuildSystem.GRADLE ? "build" : "package";
     }
 
     @Override

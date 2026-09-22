@@ -14,6 +14,9 @@ public class ServerProfile {
     public int debugPort = 8787;
     public String startupArguments = "";
     public String jvmOptions = "";
+    public String scannerName = "default";
+    public int deploymentTimeoutSeconds = 120;
+    public int startupTimeoutSeconds = 120;
 
     public ServerProfile() {}
 
@@ -28,6 +31,9 @@ public class ServerProfile {
         this.debugPort = other.debugPort;
         this.startupArguments = other.startupArguments;
         this.jvmOptions = other.jvmOptions;
+        this.scannerName = other.scannerName;
+        this.deploymentTimeoutSeconds = other.deploymentTimeoutSeconds;
+        this.startupTimeoutSeconds = other.startupTimeoutSeconds;
     }
 
     @Override

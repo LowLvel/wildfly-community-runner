@@ -39,6 +39,9 @@ public final class ServiceProfileDialog extends DialogWrapper {
     private final JComboBox<String> packaging = new JComboBox<>(new String[]{"auto", "war", "ear", "jar"});
     private final JTextField deploymentName = new JTextField(34);
     private final JTextField contextPath = new JTextField(34);
+    private final JTextField browserUrl = new JTextField(34);
+    private final JTextField buildRoot = new JTextField(34);
+    private final JTextField buildJava = new JTextField(34);
     private final JTextField artifact = new JTextField(34);
     private final JCheckBox deployAfterBuild = new JCheckBox("Auto Redeploy when built artifact changes");
 
@@ -72,7 +75,7 @@ public final class ServiceProfileDialog extends DialogWrapper {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Service", buildGeneralPanel());
         tabs.addTab("Build & JVM", buildBuildPanel());
-        tabs.setPreferredSize(new Dimension(720, 390));
+        tabs.setPreferredSize(new Dimension(760, 450));
         editor = tabs;
         return tabs;
     }
@@ -88,6 +91,8 @@ public final class ServiceProfileDialog extends DialogWrapper {
         addRow(panel, c, "Artifact type", packaging, null);
         addRow(panel, c, "Deployment name", deploymentName, null);
         addRow(panel, c, "Browser context path", contextPath, null);
+        addRow(panel, c, "Browser URL override", browserUrl, null);
+        browserUrl.setToolTipText("Optional full http:// or https:// URL; required for EAR/JAR applications without a context path.");
         addRow(panel, c, "Artifact override", artifact, browseArtifactButton());
 
         c.gridx = 1; c.weightx = 1; c.gridwidth = 2;
@@ -118,8 +123,17 @@ public final class ServiceProfileDialog extends DialogWrapper {
         panel.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         GridBagConstraints c = constraints();
         addRow(panel, c, "Tasks / goals", tasks, null);
+        addRow(panel, c, "Root build file (optional)", buildRoot, null);
+        buildRoot.setToolTipText("Project-relative or absolute reactor/root build file. Shared identical root builds run once per batch.");
+        addRow(panel, c, "Build JAVA_HOME (optional)", buildJava, null);
+        buildJava.setToolTipText("Local JDK path. Empty uses Maven Runner settings or the Gradle launcher environment.");
         addRow(panel, c, "Build arguments", arguments, null);
-        addRow(panel, c, "Quick JVM option", new JvmOptionShortcutPanel(jvmOptions), null);
+        JCheckBox presets = new JCheckBox("Show JVM option presets");
+        JvmOptionShortcutPanel shortcuts = new JvmOptionShortcutPanel(jvmOptions);
+        shortcuts.setVisible(false);
+        presets.addActionListener(event -> { shortcuts.setVisible(presets.isSelected()); panel.revalidate(); });
+        addRow(panel, c, "Advanced", presets, null);
+        addRow(panel, c, "", shortcuts, null);
         addRow(panel, c, "Build JVM options", jvmOptions, null);
         c.gridx = 1; c.weightx = 1; c.gridwidth = 2;
         panel.add(new JLabel("Sensitive -D properties use IDE Passwords. For custom keys: -Dkey=${env:VARIABLE}."), c);
@@ -143,6 +157,9 @@ public final class ServiceProfileDialog extends DialogWrapper {
         packaging.setSelectedItem(normalizePackaging(working.packaging));
         deploymentName.setText(Objects.toString(working.deploymentName, ""));
         contextPath.setText(Objects.toString(working.contextPath, ""));
+        browserUrl.setText(Objects.toString(working.browserUrl, ""));
+        buildRoot.setText(Objects.toString(working.buildRootPath, ""));
+        buildJava.setText(Objects.toString(working.buildJavaHome, ""));
         artifact.setText(Objects.toString(working.artifactPath, ""));
         deployAfterBuild.setSelected(working.deployAfterBuild);
         tasks.setText(working.buildTasks == null || working.buildTasks.isBlank() ? working.defaultTasks() : working.buildTasks);
@@ -253,6 +270,9 @@ public final class ServiceProfileDialog extends DialogWrapper {
         working.packaging = Objects.toString(packaging.getSelectedItem(), "auto");
         working.deploymentName = deploymentName.getText().trim();
         working.contextPath = contextPath.getText().trim();
+        working.browserUrl = browserUrl.getText().trim();
+        working.buildRootPath = buildRoot.getText().trim();
+        working.buildJavaHome = buildJava.getText().trim();
         working.artifactPath = artifact.getText().trim();
         working.deployAfterBuild = deployAfterBuild.isSelected();
         working.buildTasks = tasks.getText().trim();
@@ -267,6 +287,8 @@ public final class ServiceProfileDialog extends DialogWrapper {
             SensitiveProperties.requireJvmField(working.buildTasks, "build tasks/goals");
             SensitiveProperties.requireJvmField(working.buildArguments, "build arguments");
         } catch (IllegalArgumentException error) { return new ValidationInfo(error.getMessage()); }
+        try { io.github.wildflycommunityrunner.util.BrowserUrls.validateOverride(working.browserUrl); }
+        catch (IllegalArgumentException error) { return new ValidationInfo(error.getMessage(), browserUrl); }
         if (working.name == null || working.name.isBlank()) return new ValidationInfo("Service name is required.");
         if (!working.deploymentName.isBlank()) {
             try { DeploymentScannerService.safeDeploymentName(working.deploymentName); }

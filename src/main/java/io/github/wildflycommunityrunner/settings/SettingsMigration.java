@@ -28,6 +28,9 @@ final class SettingsMigration {
             service.artifactPath = text(service.artifactPath);
             service.deploymentName = text(service.deploymentName);
             service.contextPath = text(service.contextPath);
+            service.browserUrl = text(service.browserUrl);
+            service.buildRootPath = text(service.buildRootPath);
+            service.buildJavaHome = text(service.buildJavaHome);
         }
     }
 
@@ -45,6 +48,9 @@ final class SettingsMigration {
             if (server.debugPort < 1 || server.debugPort > 65535) server.debugPort = 8787;
             server.startupArguments = text(server.startupArguments);
             server.jvmOptions = text(server.jvmOptions);
+            server.scannerName = fallback(server.scannerName, "default");
+            if (server.deploymentTimeoutSeconds < 1 || server.deploymentTimeoutSeconds > 3600) server.deploymentTimeoutSeconds = 120;
+            if (server.startupTimeoutSeconds < 1 || server.startupTimeoutSeconds > 3600) server.startupTimeoutSeconds = 120;
         }
     }
 

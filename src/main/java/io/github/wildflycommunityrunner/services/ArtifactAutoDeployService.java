@@ -66,6 +66,9 @@ public final class ArtifactAutoDeployService implements Disposable {
                 .filter(service -> service.deployAfterBuild).map(ServiceProfile::new).toList();
         for (ServiceProfile service : configuredServices) {
             try {
+                var sameTarget = services.stream().filter(other -> io.github.wildflycommunityrunner.util.DeploymentNames.name(other)
+                        .equalsIgnoreCase(io.github.wildflycommunityrunner.util.DeploymentNames.name(service))).toList();
+                io.github.wildflycommunityrunner.util.DeploymentNames.requireUnique(sameTarget);
                 Path source = BuildService.resolveBuildFile(project, service).toRealPath();
                 slots.put(service.id, new Slot(service, server == null ? null : new ServerProfile(server),
                         source.getParent(), source, generation));
@@ -187,6 +190,7 @@ public final class ArtifactAutoDeployService implements Disposable {
         if (relative == null) return false;
         String name = relative.getFileName().toString();
         if (exact != null) return exact.equals(name);
+        if (ArtifactLocator.auxiliaryArchive(name)) return false;
         String lower = name.toLowerCase(Locale.ROOT);
         String packaging = Objects.toString(service.packaging, "auto").toLowerCase(Locale.ROOT);
         return switch (packaging) {
@@ -254,6 +258,8 @@ public final class ArtifactAutoDeployService implements Disposable {
                 out("Artifact changed; auto redeploying " + slot.service.name + " (" + artifact.getFileName() + ")");
                 DeploymentScannerService.deploy(project, slot.server, artifact, name, this::out, ok -> {
                     try {
+                        if (ok) io.github.wildflycommunityrunner.settings.WildFlyApplicationSettings.getInstance()
+                                .rememberDeployment(slot.server, name, slot.service);
                         synchronized (ArtifactAutoDeployService.this) { if (current(slot)) slot.failed = ok ? null : fingerprint; }
                         owned.complete(ok);
                     } finally { finished(slot, false); }

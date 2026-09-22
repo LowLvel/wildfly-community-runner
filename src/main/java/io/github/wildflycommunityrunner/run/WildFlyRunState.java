@@ -20,11 +20,18 @@ import org.jetbrains.annotations.NotNull;
 final class WildFlyRunState extends CommandLineState implements RemoteConnectionCreator, RemoteState {
     private final ServerProfile profile;
     private final boolean debug;
+    private final java.util.List<io.github.wildflycommunityrunner.model.ServiceProfile> services;
 
     WildFlyRunState(ExecutionEnvironment environment, ServerProfile profile, boolean debug) {
+        this(environment, profile, debug, java.util.List.of());
+    }
+
+    WildFlyRunState(ExecutionEnvironment environment, ServerProfile profile, boolean debug,
+                   java.util.List<io.github.wildflycommunityrunner.model.ServiceProfile> services) {
         super(environment);
         this.profile = new ServerProfile(profile);
         this.debug = debug;
+        this.services = services.stream().map(io.github.wildflycommunityrunner.model.ServiceProfile::new).toList();
     }
 
     @Override protected @NotNull ProcessHandler startProcess() {
@@ -32,7 +39,8 @@ final class WildFlyRunState extends CommandLineState implements RemoteConnection
             if (getEnvironment().getProject().isDisposed()) throw new ExecutionException("Project closed before WildFly started.");
             var result = WildFlyProcessService.getInstance().startForExecution(profile, debug);
             return new WildFlySessionProcessHandler.Launch(result.handler(), result.ownsProcess());
-        }, command -> ApplicationManager.getApplication().executeOnPooledThread(command));
+        }, command -> ApplicationManager.getApplication().executeOnPooledThread(command),
+                (cancelled, output) -> ApplicationLaunch.deploy(getEnvironment().getProject(), profile, services, cancelled, output));
         getEnvironment().getProject().getService(WildFlySessionService.class).register(handler);
         return handler;
     }

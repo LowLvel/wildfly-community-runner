@@ -48,6 +48,7 @@ public final class DeploymentScannerService {
                 "Deployment failed", output, completion, () -> {
             // A queued automatic request may have expired while another scanner operation held the target.
             if (!applicable.getAsBoolean()) return false;
+            requireRunningScanner(snapshot);
             boolean success = false;
             Path deployments = WildFlyPaths.deploymentsDir(snapshot);
             Files.createDirectories(deployments);
@@ -62,7 +63,7 @@ public final class DeploymentScannerService {
             Files.deleteIfExists(deployments.resolve(name + ".undeployed"));
             replaceArtifactSafely(artifact, target, expected);
             createRequestMarker(deployments.resolve(name + ".dodeploy"));
-            success = waitForDeployment(project, deployments, name, previousDeployedStamp, output);
+            success = waitForDeployment(project, deployments, name, previousDeployedStamp, snapshot.deploymentTimeoutSeconds, output);
             return success;
         });
     }
@@ -220,7 +221,7 @@ public final class DeploymentScannerService {
             return "NOT DEPLOYED";
         }
         if (Files.exists(deployments.resolve(deploymentName + ".failed"))) return "FAILED";
-        if (Files.exists(deployments.resolve(deploymentName + ".isdeploying"))
+            if (Files.exists(deployments.resolve(deploymentName + ".isdeploying"))
                 || Files.exists(deployments.resolve(deploymentName + ".pending"))
                 || Files.exists(deployments.resolve(deploymentName + ".dodeploy"))) return "DEPLOYING";
         if (Files.exists(deployments.resolve(deploymentName + ".isundeploying"))) return "NOT DEPLOYED";
@@ -249,6 +250,7 @@ public final class DeploymentScannerService {
                                         Consumer<Boolean> completion) {
         ServerProfile snapshot = new ServerProfile(profile);
         submitTarget(project, snapshot, deploymentName, "Redeploy failed", output, completion, () -> {
+            requireRunningScanner(snapshot);
             boolean success = false;
             String name = safeDeploymentName(deploymentName);
             Path deployments = WildFlyPaths.deploymentsDir(snapshot);
@@ -260,7 +262,7 @@ public final class DeploymentScannerService {
             Files.deleteIfExists(deployments.resolve(name + ".undeployed"));
             createRequestMarker(deployments.resolve(name + ".dodeploy"));
             out(output, "Redeploy requested for existing deployment: " + deploymentName);
-            success = waitForDeployment(project, deployments, name, previousDeployedStamp, output);
+            success = waitForDeployment(project, deployments, name, previousDeployedStamp, snapshot.deploymentTimeoutSeconds, output);
             return success;
         });
     }
@@ -309,11 +311,11 @@ public final class DeploymentScannerService {
         }
     }
 
-    private static boolean waitForDeployment(Project project, Path deployments, String name, long previousDeployedStamp, Consumer<String> output) throws Exception {
+    private static boolean waitForDeployment(Project project, Path deployments, String name, long previousDeployedStamp, int timeoutSeconds, Consumer<String> output) throws Exception {
         Path deployed = deployments.resolve(name + ".deployed");
         Path failed = deployments.resolve(name + ".failed");
         Path deploying = deployments.resolve(name + ".isdeploying");
-        Instant deadline = Instant.now().plus(Duration.ofSeconds(60));
+        Instant deadline = Instant.now().plusSeconds(Math.max(1, timeoutSeconds));
         boolean sawDeploying = false;
 
         while (Instant.now().isBefore(deadline) && !project.isDisposed()) {
@@ -336,7 +338,21 @@ public final class DeploymentScannerService {
             Thread.sleep(300);
         }
         if (project.isDisposed()) throw new ProcessCanceledException();
-        throw new IOException("No fresh deployment confirmation for " + name + " within 60 seconds. Check that WildFly and its deployment scanner are running, then inspect server.log.");
+        throw new IOException("No fresh deployment confirmation for " + name + " within " + timeoutSeconds + " seconds. The request may still complete; inspect server.log before retrying.");
+    }
+
+    private static void requireRunningScanner(ServerProfile profile) {
+        ScannerConfiguration.requireEnabled(profile);
+        if (!WildFlyProcessService.getInstance().isDetectedRunning(profile))
+            throw new IllegalStateException("WildFly is stopped or unverified. Start the selected server before deploying; no archive was copied.");
+    }
+
+    public static String visibleStatus(String scannerStatus, WildFlyProcessService.ServerState serverState) {
+        return switch (serverState) {
+            case STOPPED, STOPPING -> "SERVER STOPPED";
+            case PORT_BUSY, OTHER_CONFIGURATION -> "UNKNOWN";
+            default -> scannerStatus;
+        };
     }
 
     private static long lastModified(Path path) {

@@ -52,8 +52,9 @@ public class ProjectSetupTest extends BasePlatformTestCase {
         assertEquals(server.id, settings().getState().selectedServerId);
         assertEquals(1, settings().services().size());
         var service = settings().services().getFirst();
-        assertEquals("clean build", service.buildTasks);
-        assertEquals("-x test", service.buildArguments);
+        assertEquals("build", service.buildTasks);
+        assertEquals("", service.buildArguments);
+        assertFalse(service.deployAfterBuild);
         assertEquals("orders.war", service.deploymentName);
         assertEquals(service.id, app().findKnownServiceByBuildFile(service.buildFilePath).id);
         assertFalse(WildFlyProcessService.getInstance().isRunning(server));

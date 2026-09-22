@@ -30,7 +30,7 @@ public final class MavenBuildService {
 
     static void build(Project project, ServiceProfile service, BuildOperation operation, Consumer<String> output) {
         Path pom = resolvePom(project, service);
-        String tasks = service.buildTasks == null || service.buildTasks.isBlank() ? "clean package" : service.buildTasks;
+        String tasks = service.buildTasks == null || service.buildTasks.isBlank() ? "package" : service.buildTasks;
         List<String> goals = new ArrayList<>(ParametersListUtil.parse(tasks));
         if (service.buildArguments != null && !service.buildArguments.isBlank()) goals.addAll(ParametersListUtil.parse(service.buildArguments));
         MavenRunnerParameters parameters = new MavenRunnerParameters();
@@ -43,6 +43,7 @@ public final class MavenBuildService {
                 if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
                 FileDocumentManager.getInstance().saveAllDocuments();
                 MavenRunnerSettings settings = MavenRunner.getInstance(project).getSettings().clone();
+                if (service.buildJavaHome != null && !service.buildJavaHome.isBlank()) settings.setJreName(service.buildJavaHome.trim());
                 String inherited = settings.getVmOptions() == null ? "" : settings.getVmOptions().trim();
                 String options = service.buildJvmOptions == null ? "" : service.buildJvmOptions.trim();
                 ModalityState modality = ModalityState.defaultModalityState();

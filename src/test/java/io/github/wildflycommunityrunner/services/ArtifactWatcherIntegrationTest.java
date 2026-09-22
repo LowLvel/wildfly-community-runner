@@ -36,6 +36,8 @@ public class ArtifactWatcherIntegrationTest extends BasePlatformTestCase {
         service.buildFilePath = write(root, "project/pom.xml", "<project/>").toString();
         service.deploymentName = "api.war";
         server = new ServerProfile(); server.home = root.resolve("wildfly").toString();
+        write(Path.of(server.home), "standalone/configuration/standalone.xml",
+                "<server><deployment-scanner name='default' path='deployments' relative-to='jboss.server.base.dir'/></server>");
         target = WildFlyPaths.deploymentsDir(server).resolve("api.war");
         process = new BuildOperationTest.Process(); process.startNotify();
         WildFlyProcessService.getInstance().registerManaged(server, process, false);

@@ -16,6 +16,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import com.intellij.util.messages.Topic;
+import io.github.wildflycommunityrunner.util.WildFlyPaths;
 
 @Service(Service.Level.APP)
 @State(name = "WildFlyCommunityRunner", storages = @Storage("wildflyCommunityRunner.xml"))
@@ -31,8 +32,52 @@ public final class WildFlyApplicationSettings implements PersistentStateComponen
         public int schemaVersion;
         public List<ServerProfile> servers = new ArrayList<>();
         public List<ServiceProfile> knownServices = new ArrayList<>();
+        public List<DeploymentSource> deploymentSources = new ArrayList<>();
         public String lastServerId = "";
         public boolean environmentSetupCompleted;
+    }
+
+    public static final class DeploymentSource {
+        public String home = "";
+        public String base = "";
+        public String configuration = "";
+        public String deploymentName = "";
+        public String buildFilePath = "";
+        public DeploymentSource() {}
+        DeploymentSource(DeploymentSource other) {
+            home = other.home; base = other.base; configuration = other.configuration;
+            deploymentName = other.deploymentName; buildFilePath = other.buildFilePath;
+        }
+        boolean matches(ServerProfile server, String name) {
+            var identity = WildFlyPaths.identity(server);
+            return sameBuildFile(home, identity.home().toString()) && sameBuildFile(base, identity.base().toString())
+                    && sameBuildFile(configuration, identity.configuration().toString()) && deploymentName.equals(name);
+        }
+    }
+
+    /** Associations are created by an explicit user choice or a confirmed deployment, never a name guess. */
+    public void rememberDeployment(ServerProfile server, String deploymentName, ServiceProfile service) {
+        rememberService(service);
+        var identity = WildFlyPaths.identity(server);
+        synchronized (this) {
+            state.deploymentSources.removeIf(source -> source.matches(server, deploymentName));
+            var source = new DeploymentSource();
+            source.home = identity.home().toString(); source.base = identity.base().toString();
+            source.configuration = identity.configuration().toString(); source.deploymentName = deploymentName;
+            source.buildFilePath = service.buildFilePath;
+            state.deploymentSources.add(source);
+        }
+        publish(false, true);
+    }
+
+    public synchronized ServiceProfile findDeploymentSource(ServerProfile server, String deploymentName) {
+        for (DeploymentSource source : state.deploymentSources) {
+            if (!source.matches(server, deploymentName)) continue;
+            ServiceProfile service = findKnownServiceByBuildFile(source.buildFilePath);
+            if (service != null) service.deploymentName = deploymentName;
+            return service;
+        }
+        return null;
     }
 
     private StateData state = migrate(new StateData());
@@ -93,7 +138,11 @@ public final class WildFlyApplicationSettings implements PersistentStateComponen
 
     public void forgetServices(Set<String> ids) {
         boolean changed;
-        synchronized (this) { changed = state.knownServices.removeIf(service -> ids.contains(service.id)); }
+        synchronized (this) {
+            var forgotten = state.knownServices.stream().filter(service -> ids.contains(service.id)).map(service -> service.buildFilePath).toList();
+            state.deploymentSources.removeIf(source -> forgotten.stream().anyMatch(path -> sameBuildFile(path, source.buildFilePath)));
+            changed = state.knownServices.removeIf(service -> ids.contains(service.id));
+        }
         if (changed) publish(false, true);
     }
 
@@ -105,6 +154,9 @@ public final class WildFlyApplicationSettings implements PersistentStateComponen
             copy.migrateLegacyFields();
             copy.id = id;
             copy.tracked = false;
+            String previousPath = state.knownServices.stream().filter(service -> service.id.equals(id)).findFirst().orElseThrow().buildFilePath;
+            state.deploymentSources.stream().filter(source -> sameBuildFile(source.buildFilePath, previousPath))
+                    .forEach(source -> source.buildFilePath = copy.buildFilePath);
             state.knownServices.removeIf(service -> service.id.equals(id) || sameBuildFile(service.buildFilePath, copy.buildFilePath));
             state.knownServices.add(copy);
         }
@@ -121,6 +173,8 @@ public final class WildFlyApplicationSettings implements PersistentStateComponen
             if (server != null) result.servers.add(new ServerProfile(server));
         if (source.knownServices != null) for (ServiceProfile service : source.knownServices)
             if (service != null) result.knownServices.add(new ServiceProfile(service));
+        if (source.deploymentSources != null) for (DeploymentSource binding : source.deploymentSources)
+            if (binding != null) result.deploymentSources.add(new DeploymentSource(binding));
         return result;
     }
 

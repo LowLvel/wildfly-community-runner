@@ -16,6 +16,11 @@ public final class BuildBatch {
         BuildOperation build(ServiceProfile service);
         CompletableFuture<Boolean> deploy(ServiceProfile service, ServerProfile server);
         Runnable suppress(ServiceProfile service);
+        default String buildKey(ServiceProfile service) {
+            if (service.buildRootPath == null || service.buildRootPath.isBlank()) return "service:" + service.id;
+            return service.buildSystem + "\n" + service.buildRootPath + "\n" + service.buildTasks + "\n"
+                    + service.buildArguments + "\n" + service.buildJvmOptions + "\n" + service.buildJavaHome;
+        }
     }
     private final List<ServiceProfile> services;
     private final ServerProfile server;
@@ -26,7 +31,9 @@ public final class BuildBatch {
     private final Consumer<Status> progress;
     private final CompletableFuture<Result> completion = new CompletableFuture<>();
     private BuildOperation operation;
-    private Runnable release;
+    private final java.util.List<Runnable> releases = new java.util.ArrayList<>();
+    private final java.util.Set<String> completedBuilds = new java.util.HashSet<>();
+    private boolean suppressed;
     private int index;
     private boolean started;
     private boolean cancelled;
@@ -60,7 +67,11 @@ public final class BuildBatch {
         ServiceProfile service = services.get(index);
         update("Building " + (index + 1) + "/" + services.size() + ": " + service.name, true);
         try {
-            if (mode != Mode.AUTO) release = backend.suppress(service);
+            if (mode != Mode.AUTO && !suppressed) {
+                suppressed = true;
+                for (ServiceProfile source : services) releases.add(backend.suppress(source));
+            }
+            if (completedBuilds.contains(backend.buildKey(service))) { deployOrAdvance(service); return; }
             operation = backend.build(service);
             BuildOperation expected = operation;
             operation.completion().whenComplete((result, error) -> executor.execute(() -> built(expected, result, error)));
@@ -78,13 +89,18 @@ public final class BuildBatch {
             finish(BuildOperation.Outcome.FAILED, services.get(index).name + ": " + result.detail(), false);
         } else {
             ServiceProfile service = services.get(index);
+            completedBuilds.add(backend.buildKey(service));
+            deployOrAdvance(service);
+        }
+    }
+
+    private void deployOrAdvance(ServiceProfile service) {
             boolean deploy = server != null && (mode == Mode.FORCE_DEPLOY || mode == Mode.AUTO && external && service.deployAfterBuild);
             if (!deploy) { advance(); return; }
             deploying = true;
             update("Deploying " + (index + 1) + "/" + services.size() + ": " + service.name, true);
             try { backend.deploy(service, server).whenComplete((ok, failure) -> executor.execute(() -> deployed(ok, failure))); }
             catch (Exception failure) { failed(failure); }
-        }
     }
 
     private synchronized void deployed(Boolean ok, Throwable error) {
@@ -97,7 +113,6 @@ public final class BuildBatch {
     }
 
     private void advance() {
-        release();
         index++;
         executor.execute(this::next);
     }
@@ -126,9 +141,8 @@ public final class BuildBatch {
         } else finish(BuildOperation.Outcome.FAILED, PluginNotifications.message(error), false);
     }
     private void release() {
-        Runnable lease = release;
-        release = null;
-        if (lease != null) lease.run();
+        for (Runnable lease : releases) lease.run();
+        releases.clear();
     }
     private void finish(BuildOperation.Outcome outcome, String detail, boolean reported) {
         if (completion.isDone()) return;

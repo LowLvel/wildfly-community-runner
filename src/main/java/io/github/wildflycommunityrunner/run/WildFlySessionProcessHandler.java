@@ -17,10 +17,14 @@ import io.github.wildflycommunityrunner.security.SensitiveProperties;
 final class WildFlySessionProcessHandler extends ProcessHandler {
     record Launch(ProcessHandler handler, boolean ownsProcess) {}
     @FunctionalInterface interface Launcher { Launch launch() throws Exception; }
+    @FunctionalInterface interface AfterLaunch {
+        void run(java.util.function.BooleanSupplier cancelled, java.util.function.Consumer<String> output) throws Exception;
+    }
     private enum Request { NONE, STOP, DETACH }
 
     private final Launcher launcher;
     private final Executor executor;
+    private final AfterLaunch afterLaunch;
     private Request request = Request.NONE;
     private Launch launch;
     private SecretRedactor redactor = new SecretRedactor(java.util.List.of());
@@ -34,9 +38,16 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
     };
 
     WildFlySessionProcessHandler(Launcher launcher, Executor executor) {
+        this(launcher, executor, null);
+    }
+
+    WildFlySessionProcessHandler(Launcher launcher, Executor executor, AfterLaunch afterLaunch) {
         this.launcher = launcher;
         this.executor = executor;
+        this.afterLaunch = afterLaunch;
     }
+
+    private synchronized boolean cancelled() { return request != Request.NONE || isProcessTerminated(); }
 
     void begin() {
         startNotify();
@@ -57,6 +68,8 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
                 if (pending == Request.NONE) {
                     Integer exit = result.handler().getExitCode();
                     if (exit != null) finish(exit);
+                    else if (afterLaunch != null) afterLaunch.run(this::cancelled,
+                            text -> notifyTextAvailable(redactor.redact(text) + "\n", ProcessOutputTypes.STDOUT));
                 }
             } catch (ProcessCanceledException cancelled) {
                 finish(130);
@@ -65,6 +78,9 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
                 Thread.currentThread().interrupt();
                 finish(130);
             } catch (Exception e) {
+                Launch current;
+                synchronized (this) { current = launch; }
+                if (current != null && current.ownsProcess()) current.handler().destroyProcess();
                 if (!isProcessTerminated()) {
                     notifyTextAvailable("Cannot start WildFly: " + SensitiveProperties.redactProperties(e.getMessage()) + "\n", ProcessOutputTypes.STDERR);
                     finish(1);
