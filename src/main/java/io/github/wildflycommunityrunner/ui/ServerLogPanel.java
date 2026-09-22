@@ -57,6 +57,7 @@ public final class ServerLogPanel extends JPanel implements Disposable {
         this.project = project; processes = WildFlyProcessService.getInstance();
         setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
         output.setEditable(false);
+        ((javax.swing.text.DefaultCaret) output.getCaret()).setUpdatePolicy(javax.swing.text.DefaultCaret.NEVER_UPDATE);
         output.setFont(new Font(Font.MONOSPACED, Font.PLAIN, output.getFont().getSize()));
         output.getAccessibleContext().setAccessibleName("WildFly server.log tail");
         location.setEditable(false);
@@ -121,7 +122,7 @@ public final class ServerLogPanel extends JPanel implements Disposable {
     }
 
     public void setActive(boolean value) {
-        if (active == value) return;
+        if (disposed || active == value) return;
         active = value; viewRevision.incrementAndGet();
     }
     void setPaused(boolean value) {

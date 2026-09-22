@@ -145,7 +145,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     @Override
     public void addNotify() {
         super.addNotify();
-        serverLog.setActive(tabs.getSelectedComponent() == serverLog);
+        serverLog.setActive(isShowing() && tabs.getSelectedComponent() == serverLog);
         if (!disposed && !project.isDisposed() && !refreshTimer.isRunning()) refreshTimer.start();
     }
 
@@ -193,6 +193,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         tabs.addTab("Activity", logsTab);
         tabs.addTab("server.log", serverLog);
         tabs.addChangeListener(event -> serverLog.setActive(isShowing() && tabs.getSelectedComponent() == serverLog));
+        addHierarchyListener(event -> {
+            if ((event.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0)
+                serverLog.setActive(isShowing() && tabs.getSelectedComponent() == serverLog);
+        });
         add(tabs, BorderLayout.CENTER);
     }
 
