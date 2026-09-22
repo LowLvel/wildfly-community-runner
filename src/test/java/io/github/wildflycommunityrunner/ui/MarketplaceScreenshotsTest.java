@@ -4,6 +4,8 @@ import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.IconLoader;
 import com.intellij.icons.AllIcons;
 import com.intellij.openapi.actionSystem.ActionToolbar;
+import com.intellij.openapi.actionSystem.Presentation;
+import com.intellij.openapi.actionSystem.impl.PresentationFactory;
 import com.intellij.ui.icons.IconPathProvider;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
@@ -108,28 +110,46 @@ public class MarketplaceScreenshotsTest extends BasePlatformTestCase {
         canvas.setSize(1000, 625);
         var image = new BufferedImage(1280, 800, BufferedImage.TYPE_INT_RGB);
         Graphics2D graphics = image.createGraphics();
+        var originalActionIcons = new java.util.IdentityHashMap<Presentation, Icon>();
         canvas.addNotify();
         try {
             layout(canvas); layout(canvas);
             var updates = components(panel, ActionToolbar.class).stream().map(ActionToolbar::updateActionsAsync).toList();
             await(() -> updates.stream().allMatch(java.util.concurrent.Future::isDone), Duration.ofSeconds(10), "Screenshot toolbar did not update");
+            for (ActionToolbar toolbar : components(panel, ActionToolbar.class)) {
+                for (var action : toolbar.getActions()) {
+                    Presentation presentation = action.getTemplatePresentation();
+                    originalActionIcons.putIfAbsent(presentation, presentation.getIcon());
+                    presentation.setIcon(renderedIcon(presentation.getIcon()));
+                    PresentationFactory.updatePresentation(action);
+                }
+            }
+            var renderedUpdates = components(panel, ActionToolbar.class).stream().map(ActionToolbar::updateActionsAsync).toList();
+            await(() -> renderedUpdates.stream().allMatch(java.util.concurrent.Future::isDone), Duration.ofSeconds(10), "Screenshot icons did not update");
             // Platform tests create placeholder AllIcons before this fixture starts.
             // Resolve those exact original resources through the public loader for capture.
             for (AbstractButton button : components(panel, AbstractButton.class)) {
-                if (button.getIcon() instanceof IconPathProvider icon && icon.getOriginalPath() != null) {
-                    String path = icon.getOriginalPath();
-                    button.setIcon(IconLoader.getIcon(path.startsWith("/") ? path : "/" + path, AllIcons.class));
-                }
+                button.setIcon(renderedIcon(button.getIcon()));
             }
             layout(canvas); layout(canvas);
             graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             // paint preserves selection; printAll deliberately removes table selection.
             graphics.scale(1.28, 1.28); canvas.paint(graphics);
-        } finally { graphics.dispose(); canvas.removeNotify(); canvas.remove(panel); }
+        } finally {
+            originalActionIcons.forEach(Presentation::setIcon);
+            graphics.dispose(); canvas.removeNotify(); canvas.remove(panel);
+        }
         Path directory = Path.of(System.getProperty("wildfly.test.screenshots")); Files.createDirectories(directory);
         assertTrue(ImageIO.write(image, "png", directory.resolve(file).toFile()));
         assertTrue(Files.size(directory.resolve(file)) > 10000);
+    }
+    private static Icon renderedIcon(Icon original) {
+        if (original instanceof IconPathProvider icon && icon.getOriginalPath() != null) {
+            String path = icon.getOriginalPath();
+            return IconLoader.getIcon(path.startsWith("/") ? path : "/" + path, AllIcons.class);
+        }
+        return original;
     }
     private static void layout(Container parent) { parent.doLayout(); for (Component child : parent.getComponents()) if (child instanceof Container nested) layout(nested); }
     private static <T> List<T> components(Container root, Class<T> type) {
