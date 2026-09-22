@@ -29,6 +29,7 @@ import io.github.wildflycommunityrunner.settings.WildFlyProjectSettings;
 import io.github.wildflycommunityrunner.util.ArtifactLocator;
 import io.github.wildflycommunityrunner.util.IdeUi;
 import io.github.wildflycommunityrunner.services.PluginNotifications;
+import io.github.wildflycommunityrunner.services.WildFlyServerDetector;
 import io.github.wildflycommunityrunner.util.ServicePresentation;
 import io.github.wildflycommunityrunner.util.WildFlyPaths;
 
@@ -1020,12 +1021,16 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
             if (state == WildFlyProcessService.ServerState.MANAGED) {
                 process.terminateAndWait(profile, activityOutput);
                 process.start(profile, true, activityOutput);
-            } else if (state == WildFlyProcessService.ServerState.STOPPED) {
+            } else if (state == WildFlyProcessService.ServerState.STOPPED
+                    || state == WildFlyProcessService.ServerState.PORT_BUSY
+                    || state == WildFlyProcessService.ServerState.OTHER_CONFIGURATION
+                    || state == WildFlyProcessService.ServerState.STOPPING) {
                 process.start(profile, true, activityOutput);
             } else if (state == WildFlyProcessService.ServerState.DETECTED) {
                 append("WildFly is already running outside this managed process. Trying to attach to debug port " + profile.debugPort + " without restarting it.");
             }
-            DebugAttachService.attachWhenAvailable(project, debuggerHost(profile), profile.debugPort, activityOutput);
+            int port = process.isDebugRunning(profile) ? process.managedDebugPort(profile) : profile.debugPort;
+            DebugAttachService.attachWhenAvailable(project, debuggerHost(profile), port, activityOutput);
         });
     }
 
@@ -1049,7 +1054,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
             onUi(() -> {
                 if (canForce) {
                     int answer = JOptionPane.showConfirmDialog(this,
-                            "This WildFly is running locally but was not started by the current IDE session. A unique WildFly process matching this server home was found. Force stop it?",
+                            "This WildFly was started outside the current IDE session. One local WildFly process matches this home, server base and configuration. Force stop it?",
                             "Stop Detected WildFly", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
                     if (answer == JOptionPane.YES_OPTION) {
                         background("WildFly stop failed", () -> process.forceStopDetected(profile, activityOutput));
@@ -1064,8 +1069,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private static String debuggerHost(ServerProfile profile) {
-        String host = profile.host == null || profile.host.isBlank() ? "localhost" : profile.host.trim();
-        return host.equals("0.0.0.0") || host.equals("::") || host.equals("::0") ? "localhost" : host;
+        return WildFlyServerDetector.connectionHost(profile.host);
     }
 
     private void editStandaloneConfig() {
@@ -1162,7 +1166,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private void applyServerState(ServerProfile server, WildFlyProcessService.ServerState state) {
         switch (state) {
             case MANAGED_DEBUG -> {
-                serverStateLabel.setText("Managed debug :" + server.debugPort);
+                serverStateLabel.setText("Managed debug :" + WildFlyProcessService.getInstance().managedDebugPort(server));
                 serverStateLabel.setForeground(JBUI.CurrentTheme.ProgressBar.PASSED);
             }
             case MANAGED -> {
@@ -1170,12 +1174,24 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 serverStateLabel.setForeground(JBUI.CurrentTheme.ProgressBar.PASSED);
             }
             case DETECTED -> {
-                serverStateLabel.setText("Detected running · " + debuggerHost(server) + ":" + server.httpPort);
+                serverStateLabel.setText("Detected local WildFly");
                 serverStateLabel.setForeground(JBUI.CurrentTheme.ProgressBar.WARNING);
             }
             case STOPPED -> {
                 serverStateLabel.setText("Stopped");
                 serverStateLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
+            }
+            case STOPPING -> {
+                serverStateLabel.setText("Stopping…");
+                serverStateLabel.setForeground(JBUI.CurrentTheme.ProgressBar.WARNING);
+            }
+            case PORT_BUSY -> {
+                serverStateLabel.setText("Port " + server.httpPort + " occupied · server unverified");
+                serverStateLabel.setForeground(JBUI.CurrentTheme.ProgressBar.WARNING);
+            }
+            case OTHER_CONFIGURATION -> {
+                serverStateLabel.setText("Another configuration is using this server base");
+                serverStateLabel.setForeground(JBUI.CurrentTheme.ProgressBar.WARNING);
             }
         }
     }

@@ -65,8 +65,8 @@ These tests do not replace testing against a running WildFly server.
 1. Plugin Verifier and multiple-version CI — passed [35715308965](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35715308965): three operating systems and six IDE targets.
 2. Automated behavior and platform integration tests — passed [35719197292](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35719197292): 19 plugin tests and five CI-helper tests on three operating systems, plus all six verifier targets.
 3. Native Run/Debug configurations — passed [35721351298](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35721351298): 32 plugin tests on three operating systems and all six verifier targets. A report-upload failure passed on retry; the compatibility check itself passed on both attempts.
-4. Notifications, threading boundaries, and error handling (in progress).
-5. Server detection.
+4. Notifications, threading boundaries, and error handling — passed [35725003648](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35725003648): 48 plugin tests and five CI-helper tests on all three operating systems, plus all six verifier targets.
+5. Server detection (in progress): exact process identity, managed-instance aliases, occupied-port rejection, Windows CIM/quoting, and an actual child-JVM detection fixture. The fixture emulates launcher arguments; it does not start a WildFly server.
 6. Onboarding.
 7. Build lifecycle and cancellation.
 8. Artifact watcher hardening.

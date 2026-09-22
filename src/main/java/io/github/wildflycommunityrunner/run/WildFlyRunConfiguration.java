@@ -11,6 +11,7 @@ import com.intellij.openapi.options.SettingsEditor;
 import com.intellij.openapi.project.Project;
 import com.intellij.psi.search.GlobalSearchScope;
 import io.github.wildflycommunityrunner.model.ServerProfile;
+import io.github.wildflycommunityrunner.services.WildFlyServerDetector;
 import io.github.wildflycommunityrunner.settings.WildFlyApplicationSettings;
 import io.github.wildflycommunityrunner.settings.WildFlyProjectSettings;
 import org.jdom.Element;
@@ -37,19 +38,26 @@ public class WildFlyRunConfiguration extends RunConfigurationBase<RunConfigurati
                 .findFirst().map(ServerProfile::new).orElse(null);
     }
 
-    @Override public void checkConfiguration() throws RuntimeConfigurationException {
+    private String configurationError() {
         ServerProfile server = resolveServer();
-        if (server == null) throw new RuntimeConfigurationError("Choose a WildFly server profile. Profiles are managed in the WildFly tool window.");
-        if (server.host == null || server.host.isBlank()) throw new RuntimeConfigurationError("The server profile needs a host.");
-        if (server.debugPort < 1 || server.debugPort > 65535) throw new RuntimeConfigurationError("Debug port must be between 1 and 65535.");
+        if (server == null) return "Choose a WildFly server profile. Profiles are managed in the WildFly tool window.";
+        if (server.host == null || server.host.isBlank()) return "The server profile needs a host.";
+        if (server.debugPort < 1 || server.debugPort > 65535) return "Debug port must be between 1 and 65535.";
+        if (!isAttachOnly() && (server.httpPort < 1 || server.httpPort > 65535)) return "HTTP port must be between 1 and 65535.";
         if (!isAttachOnly() && (server.home == null || server.home.isBlank())) {
-            throw new RuntimeConfigurationError("Set WildFly Home in the selected server profile.");
+            return "Set WildFly Home in the selected server profile.";
         }
+        return null;
+    }
+
+    @Override public void checkConfiguration() throws RuntimeConfigurationException {
+        String error = configurationError();
+        if (error != null) throw new RuntimeConfigurationError(error);
     }
 
     @Override public RunProfileState getState(@NotNull Executor executor, @NotNull ExecutionEnvironment environment) throws ExecutionException {
-        try { checkConfiguration(); }
-        catch (RuntimeConfigurationException e) { throw new ExecutionException(e.getMessage()); }
+        String error = configurationError();
+        if (error != null) throw new ExecutionException(error);
         ServerProfile profile = resolveServer();
         if (profile == null) throw new ExecutionException("The selected WildFly profile was removed.");
         boolean debug = DefaultDebugExecutor.EXECUTOR_ID.equals(executor.getId());
@@ -59,7 +67,7 @@ public class WildFlyRunConfiguration extends RunConfigurationBase<RunConfigurati
             remote.setName(getName());
             remote.USE_SOCKET_TRANSPORT = true;
             remote.SERVER_MODE = false;
-            remote.HOST = profile.host;
+            remote.HOST = WildFlyServerDetector.connectionHost(profile.host);
             remote.PORT = Integer.toString(profile.debugPort);
             remote.AUTO_RESTART = false;
             return remote.getState(executor, environment);

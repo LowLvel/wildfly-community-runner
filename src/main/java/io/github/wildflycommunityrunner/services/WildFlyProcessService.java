@@ -2,6 +2,7 @@ package io.github.wildflycommunityrunner.services;
 
 import com.intellij.execution.configurations.GeneralCommandLine;
 import com.intellij.execution.process.KillableProcessHandler;
+import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessOutputType;
 import com.intellij.execution.process.ProcessListener;
@@ -9,17 +10,13 @@ import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
-import com.intellij.util.execution.ParametersListUtil;
 import io.github.wildflycommunityrunner.model.ServerProfile;
 import io.github.wildflycommunityrunner.util.WildFlyPaths;
 import org.jetbrains.annotations.NotNull;
 
-import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,20 +26,27 @@ import java.util.function.Consumer;
 
 @Service(Service.Level.APP)
 public final class WildFlyProcessService {
-    private final Map<String, KillableProcessHandler> handlers = new ConcurrentHashMap<>();
-    private final Map<String, Boolean> debugModes = new ConcurrentHashMap<>();
+    private record ManagedProcess(ProcessHandler handler, boolean debug, int debugPort) {}
+    private record ManagedKey(WildFlyPaths.Identity identity, String host) {}
+    private final Map<ManagedKey, ManagedProcess> processes = new ConcurrentHashMap<>();
+    // Only background launch paths acquire this lock. UI state queries never wait for process/socket I/O.
+    private final Object launchLock = new Object();
 
     public static WildFlyProcessService getInstance() {
         return ApplicationManager.getApplication().getService(WildFlyProcessService.class);
     }
 
 
-    public enum ServerState { STOPPED, DETECTED, MANAGED, MANAGED_DEBUG }
+    public enum ServerState { STOPPED, DETECTED, MANAGED, MANAGED_DEBUG, STOPPING, PORT_BUSY, OTHER_CONFIGURATION }
 
     public ServerState state(ServerProfile profile) {
         if (profile == null) return ServerState.STOPPED;
-        if (isRunning(profile)) return isDebugRunning(profile) ? ServerState.MANAGED_DEBUG : ServerState.MANAGED;
-        return isDetectedRunning(profile) ? ServerState.DETECTED : ServerState.STOPPED;
+        ManagedProcess managed = managed(profile);
+        if (managed != null && managed.handler().isProcessTerminating()) return ServerState.STOPPING;
+        if (managed != null && !managed.handler().isProcessTerminated()) return managed.debug() ? ServerState.MANAGED_DEBUG : ServerState.MANAGED;
+        if (!WildFlyServerDetector.matchingProcesses(profile).isEmpty()) return ServerState.DETECTED;
+        if (!WildFlyServerDetector.matchingServerBase(profile).isEmpty()) return ServerState.OTHER_CONFIGURATION;
+        return WildFlyServerDetector.isPortOpen(profile) ? ServerState.PORT_BUSY : ServerState.STOPPED;
     }
 
     public boolean canForceStopDetected(ServerProfile profile) {
@@ -62,39 +66,29 @@ public final class WildFlyProcessService {
         }
         ProcessHandle process = match.get();
         output.accept("Stopping detected WildFly process " + process.pid() + " for " + profile.name + "...");
-        process.descendants().forEach(child -> { try { child.destroy(); } catch (Exception ignored) {} });
+        if (!WildFlyServerDetector.verifies(profile, process)) {
+            throw new IllegalStateException("WildFly process identity changed before Stop; no process was terminated.");
+        }
+        if (Thread.currentThread().isInterrupted()) return;
+        try (var children = process.descendants()) {
+            children.forEach(child -> { try { child.destroy(); } catch (SecurityException ignored) {} });
+        }
         process.destroy();
         long deadline = System.nanoTime() + Duration.ofSeconds(4).toNanos();
         while (process.isAlive() && System.nanoTime() < deadline) {
-            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
         }
         if (process.isAlive()) {
-            process.descendants().forEach(child -> { try { child.destroyForcibly(); } catch (Exception ignored) {} });
+            try (var children = process.descendants()) {
+                children.forEach(child -> { try { child.destroyForcibly(); } catch (SecurityException ignored) {} });
+            }
             process.destroyForcibly();
         }
     }
 
     private Optional<ProcessHandle> findUniqueLocalWildFlyProcess(ServerProfile profile) {
-        if (profile == null || profile.home == null || profile.home.isBlank()) return Optional.empty();
-        String host = profile.host == null ? "" : profile.host.trim().toLowerCase(Locale.ROOT);
-        if (!(host.isBlank() || host.equals("localhost") || host.equals("127.0.0.1") || host.equals("::1") || host.equals("0.0.0.0"))) {
-            return Optional.empty();
-        }
-        String home;
-        try { home = Path.of(profile.home).toAbsolutePath().normalize().toString().toLowerCase(Locale.ROOT); }
-        catch (Exception e) { return Optional.empty(); }
-        List<ProcessHandle> matches = ProcessHandle.allProcesses()
-                .filter(ProcessHandle::isAlive)
-                .filter(ph -> ph.pid() != ProcessHandle.current().pid())
-                .filter(ph -> {
-                    String cmd = ph.info().commandLine().orElse("").toLowerCase(Locale.ROOT);
-                    if (cmd.isBlank()) return false;
-                    boolean wildFly = cmd.contains("org.jboss.modules.main") || cmd.contains("jboss-modules") || cmd.contains("org.jboss.as.standalone");
-                    return wildFly && cmd.contains(home);
-                })
-                .limit(2)
-                .toList();
-        return matches.size() == 1 ? Optional.of(matches.get(0)) : Optional.empty();
+        List<ProcessHandle> matches = WildFlyServerDetector.matchingProcesses(profile);
+        return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
     }
 
     /** Compatibility helper for callers that already have a Project. The process registry is application-wide. */
@@ -102,60 +96,103 @@ public final class WildFlyProcessService {
         return getInstance();
     }
 
-    public synchronized boolean isRunning(ServerProfile profile) {
-        KillableProcessHandler handler = handlers.get(profile.id);
-        return handler != null && !handler.isProcessTerminated() && !handler.isProcessTerminating();
+    private static ManagedKey managedKey(ServerProfile profile) {
+        String host = WildFlyServerDetector.connectionHost(profile.host).toLowerCase(java.util.Locale.ROOT);
+        if (host.equals("127.0.0.1") || host.equals("::1")) host = "localhost";
+        return new ManagedKey(WildFlyPaths.identity(profile), host);
     }
 
-    public synchronized boolean isDebugRunning(ServerProfile profile) {
-        return isRunning(profile) && Boolean.TRUE.equals(debugModes.get(profile.id));
+    private ManagedProcess managed(ServerProfile profile) {
+        if (profile == null) return null;
+        try { return processes.get(managedKey(profile)); }
+        catch (IllegalArgumentException error) { return null; }
     }
 
-    /** True when the configured WildFly HTTP endpoint is accepting TCP connections, even if another project/process started it. */
+    public boolean isRunning(ServerProfile profile) {
+        ManagedProcess process = managed(profile);
+        return process != null && !process.handler().isProcessTerminated() && !process.handler().isProcessTerminating();
+    }
+
+    public boolean isDebugRunning(ServerProfile profile) {
+        ManagedProcess process = managed(profile);
+        return process != null && process.debug() && !process.handler().isProcessTerminated() && !process.handler().isProcessTerminating();
+    }
+
+    public int managedDebugPort(ServerProfile profile) {
+        ManagedProcess process = managed(profile);
+        return process == null ? profile.debugPort : process.debugPort();
+    }
+
+    /** A managed or identity-verified local WildFly process, including one still starting its HTTP listener. */
     public boolean isDetectedRunning(ServerProfile profile) {
-        if (profile == null) return false;
-        String host = profile.host == null || profile.host.isBlank() ? "localhost" : profile.host.trim();
-        int port = profile.httpPort > 0 ? profile.httpPort : 8080;
-        try (Socket socket = new Socket()) {
-            socket.connect(new InetSocketAddress(host, port), 250);
-            return true;
-        } catch (Exception ignored) {
-            return false;
+        return isRunning(profile) || !WildFlyServerDetector.matchingProcesses(profile).isEmpty();
+    }
+
+    public void start(ServerProfile profile, boolean debug, Consumer<String> output) throws Exception {
+        ServerProfile snapshot = new ServerProfile(profile);
+        synchronized (launchLock) {
+            if (isRunning(snapshot)) {
+                output.accept("Server is already managed by WildFly Community Runner: " + snapshot.name);
+                return;
+            }
+            ensureCanStart(snapshot);
+            if (isDetectedRunning(snapshot)) {
+                output.accept("This WildFly instance is already running locally. Use Attach Debugger to debug it.");
+                return;
+            }
+            createProcess(snapshot, debug, output).startNotify();
         }
     }
 
-    public synchronized void start(ServerProfile profile, boolean debug, Consumer<String> output) throws Exception {
-        if (isRunning(profile)) {
-            output.accept("Server is already running and managed by WildFly Community Runner: " + profile.name);
-            return;
-        }
-        if (isDetectedRunning(profile)) {
-            output.accept("A server is already listening at " + endpoint(profile) + ". Reusing the active server instead of starting another instance.");
-            return;
-        }
-
-        createProcess(profile, debug, output).startNotify();
-    }
-
-    public record LaunchResult(KillableProcessHandler handler, boolean ownsProcess) {}
+    public record LaunchResult(ProcessHandler handler, boolean ownsProcess) {}
 
     /** Called on a pooled thread by a native Run/Debug session. The owner starts notifications after binding its console. */
-    public synchronized LaunchResult startForExecution(ServerProfile profile, boolean debug) throws Exception {
-        KillableProcessHandler current = handlers.get(profile.id);
-        if (current != null && current.isProcessTerminating()) {
-            throw new IllegalStateException("WildFly is still stopping. Wait for it to exit before starting another session.");
-        }
-        if (isRunning(profile)) {
-            if (debug && !isDebugRunning(profile)) {
-                throw new IllegalStateException("This WildFly is already running without debugging. Stop it before starting Debug, or use Attach if JDWP was enabled separately.");
+    public LaunchResult startForExecution(ServerProfile profile, boolean debug) throws Exception {
+        ServerProfile snapshot = new ServerProfile(profile);
+        synchronized (launchLock) {
+            ManagedProcess current = managed(snapshot);
+            if (current != null && current.handler().isProcessTerminating()) {
+                throw new IllegalStateException("WildFly is still stopping. Wait for it to exit before starting another session.");
             }
-            return new LaunchResult(handlers.get(profile.id), false);
+            if (isRunning(snapshot)) {
+                if (debug && !isDebugRunning(snapshot)) {
+                    throw new IllegalStateException("This WildFly is already running without debugging. Stop it before starting Debug, or use Attach if JDWP was enabled separately.");
+                }
+                if (debug && current.debugPort() != snapshot.debugPort) {
+                    throw new IllegalStateException("This instance is already debugging on port " + current.debugPort()
+                            + ". Update the profile's debug port or stop the instance before restarting Debug.");
+                }
+                return new LaunchResult(current.handler(), false);
+            }
+            ensureCanStart(snapshot);
+            if (isDetectedRunning(snapshot)) {
+                throw new IllegalStateException("This WildFly instance is already running locally. Use WildFly Attach Debugger to attach without restarting it.");
+            }
+            return new LaunchResult(createProcess(snapshot, debug, ignored -> {}), true);
         }
-        if (isDetectedRunning(profile)) {
-            throw new IllegalStateException("A server is already running at " + endpoint(profile)
-                    + ". Use the WildFly Attach Debugger configuration to attach without restarting it.");
+    }
+
+    private void ensureCanStart(ServerProfile profile) {
+        String error = WildFlyPaths.validate(profile);
+        if (error != null) throw new IllegalArgumentException(error);
+        if (!WildFlyServerDetector.isLocalHost(profile.host)) {
+            throw new IllegalArgumentException("Local WildFly launch requires a local HTTP host. Use Attach Debugger for a remote JVM.");
         }
-        return new LaunchResult(createProcess(profile, debug, ignored -> {}), true);
+        WildFlyPaths.Identity identity = WildFlyPaths.identity(profile);
+        ManagedProcess current = processes.get(managedKey(profile));
+        if (current != null && current.handler().isProcessTerminating()) {
+            throw new IllegalStateException("WildFly is still stopping. Wait for it to exit before starting again.");
+        }
+        boolean anotherConfiguration = processes.entrySet().stream().anyMatch(entry ->
+                entry.getKey().identity().base().equals(identity.base()) && !entry.getKey().identity().equals(identity)
+                        && !entry.getValue().handler().isProcessTerminated());
+        if (anotherConfiguration || (WildFlyServerDetector.matchingProcesses(profile).isEmpty()
+                && !WildFlyServerDetector.matchingServerBase(profile).isEmpty())) {
+            throw new IllegalStateException("Another WildFly configuration is using this server base directory. Stop it first or configure a separate jboss.server.base.dir.");
+        }
+        if (!isDetectedRunning(profile) && WildFlyServerDetector.isPortOpen(profile)) {
+            throw new IllegalStateException("Port " + endpoint(profile) + " is occupied, but its process could not be verified as this WildFly instance. Check the port and server profile before starting.");
+        }
     }
 
     private KillableProcessHandler createProcess(ServerProfile profile, boolean debug, Consumer<String> output) throws Exception {
@@ -165,16 +202,17 @@ public final class WildFlyProcessService {
 
         Path script = WildFlyPaths.startupScript(profile);
         boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        List<String> startupArguments = WildFlyPaths.startupArguments(profile);
         List<String> serverArgs = new ArrayList<>();
-        serverArgs.add("-c");
-        serverArgs.add(profile.configuration);
+        if (!WildFlyPaths.hasConfigurationArgument(startupArguments)) {
+            serverArgs.add("-c");
+            serverArgs.add(profile.configuration);
+        }
         if (debug) {
             serverArgs.add("--debug");
             serverArgs.add(Integer.toString(profile.debugPort));
         }
-        if (profile.startupArguments != null && !profile.startupArguments.isBlank()) {
-            serverArgs.addAll(ParametersListUtil.parse(profile.startupArguments));
-        }
+        serverArgs.addAll(startupArguments);
 
         List<String> command = new ArrayList<>();
         if (windows) {
@@ -199,8 +237,7 @@ public final class WildFlyProcessService {
                 + " using " + profile.configuration);
         KillableProcessHandler handler = new KillableProcessHandler(commandLine);
         handler.setShouldKillProcessSoftly(false);
-        handlers.put(profile.id, handler);
-        debugModes.put(profile.id, debug);
+        registerManaged(profile, handler, debug);
         handler.addProcessListener(new ProcessListener() {
             @Override
             @SuppressWarnings("rawtypes")
@@ -212,21 +249,29 @@ public final class WildFlyProcessService {
 
             @Override
             public void processTerminated(@NotNull ProcessEvent event) {
-                if (handlers.remove(profile.id, handler)) debugModes.remove(profile.id);
                 output.accept(profile.name + " terminated with exit code " + event.getExitCode());
             }
         });
         return handler;
     }
 
+    void registerManaged(ServerProfile profile, ProcessHandler handler, boolean debug) {
+        ManagedKey identity = managedKey(profile);
+        ManagedProcess managed = new ManagedProcess(handler, debug, profile.debugPort);
+        processes.put(identity, managed);
+        handler.addProcessListener(new ProcessListener() {
+            @Override public void processTerminated(@NotNull ProcessEvent event) {
+                processes.remove(identity, managed);
+            }
+        });
+    }
+
     public void terminateAndWait(ServerProfile profile, Consumer<String> output) throws InterruptedException {
-        KillableProcessHandler handler;
-        synchronized (this) {
-            handler = handlers.get(profile.id);
-            if (handler == null || handler.isProcessTerminated()) return;
-            output.accept("Restarting " + profile.name + " for debug...");
-            handler.killProcess();
-        }
+        ManagedProcess managed = managed(profile);
+        if (managed == null || managed.handler().isProcessTerminated()) return;
+        ProcessHandler handler = managed.handler();
+        output.accept("Restarting " + profile.name + " for debug...");
+        handler.destroyProcess();
         long deadline = System.currentTimeMillis() + 10_000L;
         while (!handler.isProcessTerminated() && System.currentTimeMillis() < deadline) {
             Thread.sleep(100L);
@@ -234,8 +279,9 @@ public final class WildFlyProcessService {
         if (!handler.isProcessTerminated()) throw new IllegalStateException("WildFly did not terminate within 10 seconds.");
     }
 
-    public synchronized void terminate(ServerProfile profile, Consumer<String> output) {
-        KillableProcessHandler handler = handlers.get(profile.id);
+    public void terminate(ServerProfile profile, Consumer<String> output) {
+        ManagedProcess managed = managed(profile);
+        ProcessHandler handler = managed == null ? null : managed.handler();
         if (handler == null || handler.isProcessTerminated()) {
             if (isDetectedRunning(profile)) {
                 output.accept("WildFly is running at " + endpoint(profile) + " but was not started by this IDE process, so it will not be force-killed automatically.");
@@ -245,11 +291,12 @@ public final class WildFlyProcessService {
             return;
         }
         output.accept("Terminating " + profile.name + "...");
-        handler.killProcess();
+        handler.destroyProcess();
     }
 
     public String endpoint(ServerProfile profile) {
-        String host = profile.host == null || profile.host.isBlank() ? "localhost" : profile.host.trim();
+        String host = WildFlyServerDetector.connectionHost(profile.host);
+        if (host.contains(":")) host = "[" + host + "]";
         int port = profile.httpPort > 0 ? profile.httpPort : 8080;
         return host + ":" + port;
     }

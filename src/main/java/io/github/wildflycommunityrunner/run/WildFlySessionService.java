@@ -1,6 +1,6 @@
 package io.github.wildflycommunityrunner.run;
 
-import com.intellij.execution.process.ProcessAdapter;
+import com.intellij.execution.process.ProcessListener;
 import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.openapi.Disposable;
@@ -17,7 +17,7 @@ public final class WildFlySessionService implements Disposable {
 
     void register(ProcessHandler handler) {
         sessions.add(handler);
-        handler.addProcessListener(new ProcessAdapter() {
+        handler.addProcessListener(new ProcessListener() {
             @Override public void processTerminated(@NotNull ProcessEvent event) {
                 sessions.remove(handler);
                 handler.removeProcessListener(this);

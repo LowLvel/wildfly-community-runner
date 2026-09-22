@@ -64,9 +64,11 @@ For unusual deployments where the WildFly context root differs from the WAR name
 
 WildFly server profiles are application-wide. A WildFly process started by the plugin is managed application-wide too, so opening another IntelliJ project does not start a duplicate instance. New projects reuse the last/active profile and can stop the managed process.
 
-If a server is already listening on the configured HTTP host/port but was not launched by the current IDE process, it is shown as **Detected running** and reused for deployment/browser/debug-attach actions instead of spawning another WildFly.
+An externally started local JVM is shown as **Detected local WildFly** when its standalone launcher, WildFly Home, server base directory, and configuration match the profile. Detection works before HTTP becomes ready. An occupied HTTP port alone is shown as **server unverified** and blocks a duplicate launch.
 
-For local detected servers, Stop can force-stop only when the plugin can uniquely identify a WildFly JVM whose command line matches the configured WildFly Home. Ambiguous or remote processes are never killed automatically.
+For detected servers, Stop requires a unique local process match and rechecks its identity before termination. Windows uses a bounded, read-only local CIM query because JDK 21 does not expose process arguments there. Restricted process metadata leaves the server unverified. Ambiguous or remote processes are never killed automatically.
+
+Profiles targeting the same instance share its managed process even when their profile IDs differ. Different configurations cannot start concurrently against the same server base directory. Path shortcuts honor `jboss.server.base.dir`, `jboss.server.config.dir`, and `jboss.server.log.dir` options. Deployment-scanner operations use the default `deployments` directory under that base; custom scanner paths in XML are not supported.
 
 ## WildFly profiles
 
@@ -129,6 +131,11 @@ Maven launch/document saving is dispatched through IntelliJ's application queue.
 ## Build
 
 Requirements: JDK 21. Gradle 9.0.0 is pinned by the included wrapper with a SHA-256 checksum.
+
+Keep the wrapper scripts, properties, and JAR in version control. They provide the
+same Gradle version locally and in CI without requiring a separate Gradle install.
+Set IntelliJ's Gradle JVM to JDK 21. The plugin targets Java 21 bytecode to support
+IDEA 2025.1; installing a newer SDK does not change the runtime inside that IDE.
 
 ```bash
 ./gradlew verifyPluginProjectConfiguration test buildPlugin verifyPluginStructure

@@ -13,6 +13,7 @@ import com.intellij.execution.runners.ProgramRunner;
 import com.intellij.openapi.application.ApplicationManager;
 import io.github.wildflycommunityrunner.model.ServerProfile;
 import io.github.wildflycommunityrunner.services.WildFlyProcessService;
+import io.github.wildflycommunityrunner.services.WildFlyServerDetector;
 import org.jetbrains.annotations.NotNull;
 
 /** Uses the standard Java runner through public execution interfaces. */
@@ -44,6 +45,6 @@ final class WildFlyRunState extends CommandLineState implements RemoteConnection
     }
 
     @Override public RemoteConnection createRemoteConnection(ExecutionEnvironment environment) { return getRemoteConnection(); }
-    @Override public RemoteConnection getRemoteConnection() { return new RemoteConnection(true, profile.host, Integer.toString(profile.debugPort), false); }
+    @Override public RemoteConnection getRemoteConnection() { return new RemoteConnection(true, WildFlyServerDetector.connectionHost(profile.host), Integer.toString(profile.debugPort), false); }
     @Override public boolean isPollConnection() { return true; }
 }

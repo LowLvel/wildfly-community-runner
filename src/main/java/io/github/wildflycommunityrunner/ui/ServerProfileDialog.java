@@ -94,11 +94,15 @@ public final class ServerProfileDialog extends DialogWrapper {
         Object current = configCombo.isEditable() ? configCombo.getEditor().getItem() : configCombo.getSelectedItem();
         String wanted = preferred != null ? preferred : current == null ? "standalone.xml" : current.toString();
         String home = homeField.getText();
+        ServerProfile location = new ServerProfile(profile);
+        location.home = home;
+        location.jvmOptions = jvmOptionsField.getText();
+        location.startupArguments = startupArgumentsField.getText();
         int generation = ++configurationGeneration;
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             java.util.List<String> names = new java.util.ArrayList<>();
             try {
-                Path dir = Path.of(home).resolve("standalone").resolve("configuration");
+                Path dir = WildFlyPaths.configurationDir(location);
                 if (Files.isDirectory(dir)) {
                     try (Stream<Path> files = Files.list(dir)) {
                         files.filter(Files::isRegularFile)

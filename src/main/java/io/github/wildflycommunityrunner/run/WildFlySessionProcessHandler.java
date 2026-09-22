@@ -1,6 +1,6 @@
 package io.github.wildflycommunityrunner.run;
 
-import com.intellij.execution.process.ProcessAdapter;
+import com.intellij.execution.process.ProcessListener;
 import com.intellij.execution.process.ProcessEvent;
 import com.intellij.execution.process.ProcessHandler;
 import com.intellij.execution.process.ProcessOutputTypes;
@@ -21,7 +21,7 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
     private final Executor executor;
     private Request request = Request.NONE;
     private Launch launch;
-    private final ProcessAdapter listener = new ProcessAdapter() {
+    private final ProcessListener listener = new ProcessListener() {
         @Override public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
             if (!isProcessTerminated()) notifyTextAvailable(event.getText(), outputType);
         }
