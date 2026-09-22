@@ -56,7 +56,7 @@ public final class MavenSecretSessions implements Disposable {
             };
             running.put(handler, lease);
             handler.addProcessListener(lease.listener);
-            if (handler.isProcessTerminated() || handler.isProcessDetached()) finish(handler);
+            if (handler.isProcessTerminated()) finish(handler);
             return;
         }
     }

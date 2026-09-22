@@ -30,7 +30,7 @@ public final class MavenJvmSecretsExtension extends RunConfigurationExtension {
     static void updateParameters(JavaParameters parameters, MavenSecretSessions sessions) throws ExecutionException {
         try {
             String prepared = sessions.prepare(ParametersListUtil.join(parameters.getVMParametersList().getList()));
-            parameters.getVMParametersList().clear();
+            parameters.getVMParametersList().clearAll();
             parameters.getVMParametersList().addParametersString(prepared);
         } catch (ProcessCanceledException cancelled) { throw cancelled; }
         catch (Exception failure) { throw new ExecutionException(SensitiveProperties.redactProperties(failure.getMessage())); }
