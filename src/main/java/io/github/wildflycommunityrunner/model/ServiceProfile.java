@@ -56,25 +56,22 @@ public class ServiceProfile {
     }
 
     public void migrateLegacyFields() {
-        if ((buildFilePath == null || buildFilePath.isBlank()) && pomPath != null && !pomPath.isBlank()) {
-            buildFilePath = pomPath;
+        // A configured generic build always wins, including intentionally empty arguments.
+        boolean legacy = (buildFilePath == null || buildFilePath.isBlank())
+                && (!blank(pomPath) || !blank(mavenGoals) || !blank(mavenArguments) || !blank(mavenJvmOptions));
+        if (legacy) {
+            buildFilePath = pomPath == null ? "" : pomPath;
             buildSystem = BuildSystem.MAVEN.name();
+            if (!blank(mavenGoals)) buildTasks = mavenGoals;
+            if (!blank(mavenArguments)) buildArguments = mavenArguments;
+            if (!blank(mavenJvmOptions)) buildJvmOptions = mavenJvmOptions;
         }
-        if (mavenGoals != null && !mavenGoals.isBlank()
-                && (buildTasks == null || buildTasks.isBlank() || "clean package".equals(buildTasks))) {
-            buildTasks = mavenGoals;
-        } else if (buildTasks == null || buildTasks.isBlank()) {
-            buildTasks = defaultTasks();
-        }
-        if (mavenArguments != null && !mavenArguments.isBlank()
-                && (buildArguments == null || buildArguments.isBlank() || "-DskipTests".equals(buildArguments))) {
-            buildArguments = mavenArguments;
-        }
-        if ((buildJvmOptions == null || buildJvmOptions.isBlank()) && mavenJvmOptions != null && !mavenJvmOptions.isBlank()) {
-            buildJvmOptions = mavenJvmOptions;
-        }
-        if (buildSystem == null || buildSystem.isBlank()) buildSystem = BuildSystem.MAVEN.name();
+        pomPath = mavenGoals = mavenArguments = mavenJvmOptions = "";
+        buildSystem = buildSystemEnum().name();
+        if (blank(buildTasks)) buildTasks = defaultTasks();
     }
+
+    private static boolean blank(String value) { return value == null || value.isBlank(); }
 
     public String defaultTasks() {
         return buildSystemEnum() == BuildSystem.GRADLE ? "clean build" : "clean package";

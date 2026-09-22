@@ -205,3 +205,18 @@ Current scope is local WildFly **standalone mode**. Domain mode and remote deplo
 ## License
 
 Apache-2.0
+
+### Remembered sources and upgrades
+
+The service toolbar's **Remembered Sources** action lists source associations shared
+across IntelliJ projects. Use **Edit / Relink** after moving a source tree or
+**Forget Selected** to remove a stale association. Availability checks run in the
+background. An unavailable drive or missing build file never triggers automatic
+deletion. Forgetting does not remove project profiles, source files, or deployed
+archives; later discovery or building can remember that source again.
+
+Settings upgrades migrate legacy Maven and single-service fields once, preserve
+explicit Maven/Gradle configuration and empty arguments, and save a versioned
+snapshot. Removing all services no longer resurrects legacy entries on restart.
+Server edits are reflected in other open projects. Unloading the plugin detaches
+its process listeners without terminating shared WildFly instances.

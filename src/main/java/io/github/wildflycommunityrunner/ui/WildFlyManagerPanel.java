@@ -76,6 +76,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private record DeploymentStatusView(String state, Instant deployedAt) {}
 
     private final Project project;
+    private WildFlyProjectSettings.StateData projectStateView = new WildFlyProjectSettings.StateData();
     private final JComboBox<ServerProfile> serverCombo = new JComboBox<>();
     private final JLabel serverStateLabel = new JLabel(" ");
     private final JPanel onboardingHint = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
@@ -121,6 +122,11 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 () -> onUi(this::refreshAfterSetup));
         project.getMessageBus().connect(this).subscribe(BuildLifecycleService.CHANGED,
                 () -> onUi(() -> { refreshBuildProgress(); refreshExternalDeployments(); }));
+        ApplicationManager.getApplication().getMessageBus().connect(this).subscribe(WildFlyApplicationSettings.CHANGED,
+                new WildFlyApplicationSettings.Listener() {
+                    @Override public void serversChanged() { onUi(WildFlyManagerPanel.this::refreshGlobalServers); }
+                    @Override public void sourcesChanged() { onUi(WildFlyManagerPanel.this::refreshExternalDeployments); }
+                });
         refreshBuildProgress();
         refreshTimer = new Timer(2000, e -> {
             if (disposed || project.isDisposed()) {
@@ -268,6 +274,12 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 .disableUpDownActions()
                 .addExtraAction(new DumbAwareAction("Discover Projects", "Find Maven and Gradle projects recursively", AllIcons.Actions.Refresh) {
                     @Override public void actionPerformed(AnActionEvent e) { onUi(WildFlyManagerPanel.this::discoverBuildProjects); }
+                    @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
+                })
+                .addExtraAction(new DumbAwareAction("Remembered Sources", "Relink or forget globally remembered source projects", AllIcons.Actions.Edit) {
+                    @Override public void actionPerformed(AnActionEvent e) {
+                        onUi(() -> new RememberedSourcesDialog(project, buildChoices).show());
+                    }
                     @Override public ActionUpdateThread getActionUpdateThread() { return ActionUpdateThread.EDT; }
                 })
                 .createPanel();
@@ -442,7 +454,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         try {
             if (serviceTable.getSelectedRowCount() > 0) externalTable.clearSelection();
             List<ServiceProfile> selected = selectedServices();
-            projectState().selectedServiceId = selected.size() == 1 ? selected.get(0).id : "";
+            updateProject(state -> state.selectedServiceId = selected.size() == 1 ? selected.get(0).id : "");
         } finally {
             changingSelection = false;
         }
@@ -454,7 +466,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         changingSelection = true;
         try {
             if (externalTable.getSelectedRowCount() > 0) serviceTable.clearSelection();
-            projectState().selectedServiceId = "";
+            updateProject(state -> state.selectedServiceId = "");
         } finally {
             changingSelection = false;
         }
@@ -558,8 +570,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         loading = true;
         refreshServers();
         refreshBuildChoices(false);
-        WildFlyProjectSettings.StateData state = projectState();
         WildFlyProjectSettings.getInstance(project).migrateLegacyService();
+        projectStateView = WildFlyProjectSettings.getInstance(project).getState();
+        WildFlyProjectSettings.StateData state = projectState();
         for (ServiceProfile service : state.services) {
             service.migrateLegacyFields();
             rememberService(service);
@@ -587,7 +600,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private void refreshAfterSetup() {
         loading = true;
         refreshServers();
-        selectServerById(projectState().selectedServerId);
+        selectServerById(WildFlyProjectSettings.getInstance(project).getState().selectedServerId);
         refreshServiceTablePreservingSelection();
         loading = false;
         syncAutoDeployWatcher();
@@ -646,17 +659,18 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
             List<BuildProjectChoice> discovered = BuildProjectDiscoveryService.discover(project);
             onUi(() -> {
                 buildChoices = discovered;
-                WildFlyProjectSettings.StateData state = projectState();
-                int added = 0;
-                for (BuildProjectChoice choice : discovered) {
-                    if (state.services.stream().anyMatch(s -> samePath(s.buildFilePath, choice.buildFilePath()))) continue;
-                    ServiceProfile service = ProjectSetupService.discoveredService(choice);
-                    state.services.add(service);
-                    rememberService(service);
-                    added++;
-                }
+                List<ServiceProfile> added = new ArrayList<>();
+                updateProject(state -> {
+                    for (BuildProjectChoice choice : discovered) {
+                        if (state.services.stream().anyMatch(item -> samePath(item.buildFilePath, choice.buildFilePath()))) continue;
+                        ServiceProfile service = ProjectSetupService.discoveredService(choice);
+                        state.services.add(service);
+                        added.add(service);
+                    }
+                });
+                added.forEach(this::rememberService);
                 refreshServiceTablePreservingSelection();
-                append(added == 0 ? "Project services are already in sync." : "Added " + added + " discovered service(s). Auto Redeploy is enabled by default and watches the built artifact directly.");
+                append(added.isEmpty() ? "Project services are already in sync." : "Added " + added.size() + " discovered service(s). Auto Redeploy is enabled by default and watches the built artifact directly.");
             });
         });
     }
@@ -668,7 +682,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         ServiceProfileDialog dialog = new ServiceProfileDialog(project, draft, buildChoices);
         if (!dialog.showAndGet()) return;
         ServiceProfile service = dialog.getProfile();
-        projectState().services.add(service);
+        updateProject(state -> state.services.add(service));
         rememberService(service);
         refreshServiceTablePreservingSelection();
         selectServiceById(service.id);
@@ -685,11 +699,12 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         if (buildChoices.isEmpty()) refreshBuildChoices(false);
         ServiceProfileDialog dialog = new ServiceProfileDialog(project, current, buildChoices);
         if (!dialog.showAndGet()) return;
-        copyService(dialog.getProfile(), current);
-        rememberService(current);
+        ServiceProfile edited = dialog.getProfile();
+        updateProject(state -> state.services.replaceAll(service -> service.id.equals(current.id) ? edited : service));
+        rememberService(edited);
         refreshServiceTablePreservingSelection();
         refreshExternalDeployments();
-        append("Updated service: " + current.name);
+        append("Updated service: " + edited.name);
     }
 
     private void removeSelectedService() {
@@ -699,10 +714,12 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         int answer = JOptionPane.showConfirmDialog(this, message, "Remove Service", JOptionPane.YES_NO_OPTION);
         if (answer != JOptionPane.YES_OPTION) return;
         Set<String> ids = new LinkedHashSet<>();
-        projectState().onboardingCompleted = true;
         for (ServiceProfile service : selected) ids.add(service.id);
-        projectState().services.removeIf(service -> ids.contains(service.id));
-        projectState().selectedServiceId = "";
+        updateProject(state -> {
+            state.onboardingCompleted = true;
+            state.services.removeIf(service -> ids.contains(service.id));
+            state.selectedServiceId = "";
+        });
         refreshServiceTablePreservingSelection();
         clearAllSelection();
         refreshExternalDeployments();
@@ -711,10 +728,12 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private void setSelectedAutoDeploy(boolean enabled) {
         List<ServiceProfile> selected = selectedServices();
         if (selected.isEmpty()) { append("Select one or more project services first."); return; }
-        for (ServiceProfile service : selected) {
-            service.deployAfterBuild = enabled;
-            rememberService(service);
-        }
+        Set<String> ids = new LinkedHashSet<>();
+        for (ServiceProfile service : selected) ids.add(service.id);
+        updateProject(state -> state.services.stream().filter(service -> ids.contains(service.id))
+                .forEach(service -> service.deployAfterBuild = enabled));
+        WildFlyProjectSettings.getInstance(project).services().stream().filter(service -> ids.contains(service.id))
+                .forEach(this::rememberService);
         refreshServiceTablePreservingSelection();
         append((enabled ? "Enabled" : "Disabled") + " Auto Redeploy for " + selected.size() + " service(s).");
     }
@@ -730,7 +749,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         if (!dialog.showAndGet()) return;
         ServiceProfile source = dialog.getProfile();
         source.deploymentName = external.deploymentName();
-        rememberService(source);
+        if (external.source() == null) rememberService(source);
+        else WildFlyApplicationSettings.getInstance().replaceKnownService(external.source().id, source);
         refreshExternalDeployments();
         append("Remembered source for external deployment " + external.deploymentName() + ": " + source.buildFilePath);
     }
@@ -744,7 +764,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
             return;
         }
         source.id = UUID.randomUUID().toString();
-        projectState().services.add(source);
+        updateProject(state -> state.services.add(source));
         rememberService(source);
         refreshServiceTablePreservingSelection();
         selectServiceById(source.id);
@@ -963,8 +983,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         ServerProfileDialog dialog = new ServerProfileDialog(project, null);
         if (!dialog.showAndGet()) return;
         ServerProfile profile = dialog.getProfile();
-        WildFlyApplicationSettings.getInstance().getState().environmentSetupCompleted = true;
-        WildFlyApplicationSettings.getInstance().servers().add(profile);
+        WildFlyApplicationSettings.getInstance().update(state -> {
+            state.environmentSetupCompleted = true;
+            state.servers.add(profile);
+        });
         refreshServers();
         serverCombo.setSelectedItem(profile);
         saveSelectedServer();
@@ -978,8 +1000,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         ServerProfileDialog dialog = new ServerProfileDialog(project, current);
         if (!dialog.showAndGet()) return;
         ServerProfile edited = dialog.getProfile();
-        List<ServerProfile> servers = WildFlyApplicationSettings.getInstance().servers();
-        for (int i = 0; i < servers.size(); i++) if (servers.get(i).id.equals(current.id)) { servers.set(i, edited); break; }
+        WildFlyApplicationSettings.getInstance().update(state ->
+                state.servers.replaceAll(server -> server.id.equals(current.id) ? edited : server));
         refreshServers();
         selectServerById(edited.id);
         saveSelectedServer();
@@ -992,8 +1014,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         if (current == null) return;
         int answer = JOptionPane.showConfirmDialog(this, "Remove server profile '" + current.name + "'?", "Remove WildFly Server", JOptionPane.YES_NO_OPTION);
         if (answer != JOptionPane.YES_OPTION) return;
-        WildFlyApplicationSettings.getInstance().getState().environmentSetupCompleted = true;
-        WildFlyApplicationSettings.getInstance().servers().removeIf(p -> p.id.equals(current.id));
+        WildFlyApplicationSettings.getInstance().update(state -> {
+            state.environmentSetupCompleted = true;
+            state.servers.removeIf(server -> server.id.equals(current.id));
+        });
         refreshServers();
         saveSelectedServer();
         syncAutoDeployWatcher();
@@ -1211,7 +1235,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         try {
             serviceTable.clearSelection();
             externalTable.clearSelection();
-            projectState().selectedServiceId = "";
+            updateProject(state -> state.selectedServiceId = "");
         } finally { changingSelection = false; }
         refreshSelectionLabel();
     }
@@ -1241,6 +1265,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         for (ServiceProfile service : selectedServices()) ids.add(service.id);
         refreshingTable = true;
         try {
+            projectStateView = WildFlyProjectSettings.getInstance(project).getState();
             serviceTableModel.fireTableDataChanged();
             serviceTable.clearSelection();
             for (int modelRow = 0; modelRow < projectState().services.size(); modelRow++) {
@@ -1280,7 +1305,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         if (loading) return;
         ServerProfile server = selectedServer();
         String id = server == null ? "" : server.id;
-        projectState().selectedServerId = id;
+        updateProject(state -> state.selectedServerId = id);
         WildFlyApplicationSettings.getInstance().setLastServerId(id);
     }
 
@@ -1297,24 +1322,25 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         return server == null ? null : new ServerProfile(server);
     }
 
-    private WildFlyProjectSettings.StateData projectState() { return WildFlyProjectSettings.getInstance(project).getState(); }
+    private WildFlyProjectSettings.StateData projectState() { return projectStateView; }
+
+    private void updateProject(Consumer<WildFlyProjectSettings.StateData> edit) {
+        WildFlyProjectSettings.getInstance(project).update(edit);
+    }
+
+    private void refreshGlobalServers() {
+        loading = true;
+        refreshServers();
+        selectServerById(WildFlyProjectSettings.getInstance(project).getState().selectedServerId);
+        loading = false;
+        saveSelectedServer();
+        syncAutoDeployWatcher();
+        refreshExternalDeployments();
+        refreshServerState();
+    }
 
     private void rememberService(ServiceProfile service) {
         WildFlyApplicationSettings.getInstance().rememberService(service);
-    }
-
-    private static void copyService(ServiceProfile source, ServiceProfile target) {
-        target.name = source.name;
-        target.buildSystem = source.buildSystem;
-        target.buildFilePath = source.buildFilePath;
-        target.buildTasks = source.buildTasks;
-        target.buildArguments = source.buildArguments;
-        target.buildJvmOptions = source.buildJvmOptions;
-        target.packaging = source.packaging;
-        target.artifactPath = source.artifactPath;
-        target.deploymentName = source.deploymentName;
-        target.contextPath = source.contextPath;
-        target.deployAfterBuild = source.deployAfterBuild;
     }
 
     private static ServiceProfile serviceDraftForExternal(String deploymentName) {
@@ -1446,10 +1472,12 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         @Override public void setValueAt(Object value, int row, int column) {
             if (column == 0 && value instanceof Boolean enabled) {
                 ServiceProfile service = projectState().services.get(row);
+                updateProject(state -> state.services.stream().filter(item -> item.id.equals(service.id))
+                        .forEach(item -> item.deployAfterBuild = enabled));
                 service.deployAfterBuild = enabled;
                 rememberService(service);
                 fireTableCellUpdated(row, column);
-                syncAutoDeployWatcher();
+                onUi(WildFlyManagerPanel.this::syncAutoDeployWatcher);
             }
         }
     }

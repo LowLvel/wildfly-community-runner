@@ -25,12 +25,15 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 @Service(Service.Level.APP)
-public final class WildFlyProcessService {
+public final class WildFlyProcessService implements com.intellij.openapi.Disposable {
     private record ManagedProcess(ProcessHandler handler, boolean debug, int debugPort) {}
     private record ManagedKey(WildFlyPaths.Identity identity, String host) {}
     private final Map<ManagedKey, ManagedProcess> processes = new ConcurrentHashMap<>();
     // Only background launch paths acquire this lock. UI state queries never wait for process/socket I/O.
     private final Object launchLock = new Object();
+    private final Object listenerLock = new Object();
+    private final Map<ProcessHandler, List<ProcessListener>> listeners = new java.util.IdentityHashMap<>();
+    private volatile boolean disposed;
 
     public static WildFlyProcessService getInstance() {
         return ApplicationManager.getApplication().getService(WildFlyProcessService.class);
@@ -131,6 +134,7 @@ public final class WildFlyProcessService {
     public void start(ServerProfile profile, boolean debug, Consumer<String> output) throws Exception {
         ServerProfile snapshot = new ServerProfile(profile);
         synchronized (launchLock) {
+            if (disposed) throw new IllegalStateException("WildFly integration has been disposed.");
             if (isRunning(snapshot)) {
                 output.accept("Server is already managed by WildFly Community Runner: " + snapshot.name);
                 return;
@@ -150,6 +154,7 @@ public final class WildFlyProcessService {
     public LaunchResult startForExecution(ServerProfile profile, boolean debug) throws Exception {
         ServerProfile snapshot = new ServerProfile(profile);
         synchronized (launchLock) {
+            if (disposed) throw new IllegalStateException("WildFly integration has been disposed.");
             ManagedProcess current = managed(snapshot);
             if (current != null && current.handler().isProcessTerminating()) {
                 throw new IllegalStateException("WildFly is still stopping. Wait for it to exit before starting another session.");
@@ -197,7 +202,7 @@ public final class WildFlyProcessService {
     }
 
     private KillableProcessHandler createProcess(ServerProfile profile, boolean debug, Consumer<String> output) throws Exception {
-
+        if (disposed) throw new IllegalStateException("WildFly integration has been disposed.");
         String validationError = WildFlyPaths.validate(profile);
         if (validationError != null) throw new IllegalArgumentException(validationError);
 
@@ -239,7 +244,7 @@ public final class WildFlyProcessService {
         KillableProcessHandler handler = new KillableProcessHandler(commandLine);
         handler.setShouldKillProcessSoftly(false);
         registerManaged(profile, handler, debug);
-        handler.addProcessListener(new ProcessListener() {
+        addListener(handler, new ProcessListener() {
             @Override
             @SuppressWarnings("rawtypes")
             public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
@@ -259,13 +264,52 @@ public final class WildFlyProcessService {
     void registerManaged(ServerProfile profile, ProcessHandler handler, boolean debug) {
         ManagedKey identity = managedKey(profile);
         ManagedProcess managed = new ManagedProcess(handler, debug, profile.debugPort);
-        processes.put(identity, managed);
-        handler.addProcessListener(new ProcessListener() {
-            @Override public void processTerminated(@NotNull ProcessEvent event) {
-                processes.remove(identity, managed);
+        boolean detach;
+        synchronized (listenerLock) {
+            detach = disposed;
+            if (!detach) {
+                processes.put(identity, managed);
+                addListener(handler, new ProcessListener() {
+                    @Override public void processTerminated(@NotNull ProcessEvent event) {
+                        processes.remove(identity, managed);
+                        removeListeners(handler);
+                    }
+                });
             }
-        });
+        }
+        // ProcessHandler queues detach until startNotify for a concurrently completing launch.
+        if (detach) handler.detachProcess();
     }
+
+    private void addListener(ProcessHandler handler, ProcessListener listener) {
+        synchronized (listenerLock) {
+            if (disposed || handler.isProcessTerminated()) return;
+            listeners.computeIfAbsent(handler, ignored -> new ArrayList<>()).add(listener);
+            handler.addProcessListener(listener);
+        }
+    }
+
+    private void removeListeners(ProcessHandler handler) {
+        synchronized (listenerLock) {
+            List<ProcessListener> removed = listeners.remove(handler);
+            if (removed != null) removed.forEach(handler::removeProcessListener);
+        }
+    }
+
+    @Override public void dispose() {
+        List<ProcessHandler> detach;
+        synchronized (listenerLock) {
+            disposed = true;
+            detach = new ArrayList<>(listeners.keySet());
+            listeners.forEach((handler, owned) -> owned.forEach(handler::removeProcessListener));
+            listeners.clear();
+            processes.clear();
+        }
+        // Unloading the plugin must release its listeners without terminating shared WildFly servers.
+        detach.forEach(handler -> { if (!handler.isProcessTerminated()) handler.detachProcess(); });
+    }
+
+    int listenerCount() { synchronized (listenerLock) { return listeners.values().stream().mapToInt(List::size).sum(); } }
 
     public void terminateAndWait(ServerProfile profile, Consumer<String> output) throws InterruptedException {
         ManagedProcess managed = managed(profile);

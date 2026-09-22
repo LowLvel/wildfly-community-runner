@@ -17,6 +17,39 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.rules.TemporaryFolder;
 
 public class ManagerPanelTest extends BasePlatformTestCase {
+    public void testSnapshotRefreshKeepsSelectedIdsAndAutoCheckboxWritesThrough() {
+        var app = WildFlyApplicationSettings.getInstance();
+        var settings = WildFlyProjectSettings.getInstance(getProject());
+        var previousApp = app.getState();
+        var previousProject = settings.getState();
+        var created = new AtomicReference<WildFlyManagerPanel>();
+        try {
+            app.loadState(new WildFlyApplicationSettings.StateData());
+            settings.loadState(new WildFlyProjectSettings.StateData());
+            var first = new ServiceProfile(); first.name = "First"; first.deployAfterBuild = false;
+            var second = new ServiceProfile(); second.name = "Second"; second.deployAfterBuild = false;
+            settings.update(state -> { state.services.add(first); state.services.add(second); });
+            IdeUi.later(getProject(), () -> created.set(new WildFlyManagerPanel(getProject())));
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            JTable table = findServiceTable(created.get());
+            assertNotNull(table);
+            table.setRowSelectionInterval(0, 1);
+            table.getModel().setValueAt(true, 1, 0);
+            assertTrue(settings.services().stream().filter(service -> service.id.equals(second.id)).findFirst().orElseThrow().deployAfterBuild);
+            var replacement = new ServiceProfile(); replacement.name = "Replacement"; replacement.deployAfterBuild = false;
+            settings.update(state -> { state.services.removeIf(service -> service.id.equals(first.id)); state.services.add(replacement); });
+            getProject().getMessageBus().syncPublisher(io.github.wildflycommunityrunner.services.ProjectSetupService.CHANGED).initialized();
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            assertEquals(2, table.getRowCount());
+            assertEquals(1, table.getSelectedRowCount());
+            assertTrue(table.getValueAt(table.getSelectedRow(), 1).toString().contains("Second"));
+        } finally {
+            if (created.get() != null) Disposer.dispose(created.get());
+            app.loadState(previousApp);
+            settings.loadState(previousProject);
+        }
+    }
+
     public void testRawSwingCanCreatePanelAndRenderingUsesCachedStatusAndTimestamp() throws Exception {
         var temporary = new TemporaryFolder();
         temporary.create();
@@ -30,13 +63,13 @@ public class ManagerPanelTest extends BasePlatformTestCase {
             projectSettings.loadState(new WildFlyProjectSettings.StateData());
             var server = new ServerProfile();
             server.home = temporary.getRoot().getAbsolutePath();
-            app.servers().add(server);
-            projectSettings.getState().selectedServerId = server.id;
+            app.update(state -> state.servers.add(server));
+            projectSettings.update(state -> state.selectedServerId = server.id);
             var service = new ServiceProfile();
             service.name = "api";
             service.deploymentName = "api.war";
             service.deployAfterBuild = false;
-            projectSettings.services().add(service);
+            projectSettings.update(state -> state.services.add(service));
             Path dir = WildFlyPaths.deploymentsDir(server);
             Files.createDirectories(dir);
             Path marker = Files.writeString(dir.resolve("api.war.deployed"), "");

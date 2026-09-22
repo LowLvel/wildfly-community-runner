@@ -57,18 +57,18 @@ public class ProjectSetupTest extends BasePlatformTestCase {
         assertEquals("orders.war", service.deploymentName);
         assertEquals(service.id, app().findKnownServiceByBuildFile(service.buildFilePath).id);
         assertFalse(WildFlyProcessService.getInstance().isRunning(server));
-        settings().services().clear();
+        settings().update(state -> state.services.clear());
         setup.applyInitialState(server, List.of(choice()));
         assertTrue(settings().services().isEmpty());
         assertEquals(1, app().servers().size());
-        app().servers().clear();
+        app().update(state -> state.servers.clear());
         setup.applyInitialState(server, List.of(choice()));
         assertTrue("A removed environment profile must not reappear", app().servers().isEmpty());
     }
 
     public void testExplicitRemovalWhileSetupIsQueuedSuppressesLateDefaults() {
-        app().getState().environmentSetupCompleted = true;
-        settings().getState().onboardingCompleted = true;
+        app().update(state -> state.environmentSetupCompleted = true);
+        settings().update(state -> state.onboardingCompleted = true);
         setup.applyInitialState(new ServerProfile(), List.of(choice()));
         assertTrue(app().servers().isEmpty());
         assertTrue(settings().services().isEmpty());
@@ -77,28 +77,28 @@ public class ProjectSetupTest extends BasePlatformTestCase {
     public void testUserChangesDuringDiscoveryWinOverInitialDefaults() {
         var selected = new ServerProfile();
         var another = new ServerProfile();
-        app().servers().add(selected);
-        app().servers().add(another);
-        settings().getState().selectedServerId = selected.id;
+        app().update(state -> state.servers.add(selected));
+        app().update(state -> state.servers.add(another));
+        settings().update(state -> state.selectedServerId = selected.id);
         var custom = new ServiceProfile();
         custom.buildTasks = "verify";
-        settings().services().add(custom);
+        settings().update(state -> state.services.add(custom));
         setup.applyInitialState(new ServerProfile(), List.of(choice()));
         assertEquals(2, app().servers().size());
         assertEquals(selected.id, settings().getState().selectedServerId);
-        assertSame(custom, settings().services().getFirst());
-        assertEquals("verify", custom.buildTasks);
+        assertEquals(custom.id, settings().services().getFirst().id);
+        assertEquals("verify", settings().services().getFirst().buildTasks);
     }
 
     public void testMissingSelectionUsesLastGlobalServerAndLegacyServiceIsPreserved() {
         var first = new ServerProfile();
         var last = new ServerProfile();
-        app().servers().add(first);
-        app().servers().add(last);
+        app().update(state -> state.servers.add(first));
+        app().update(state -> state.servers.add(last));
         app().setLastServerId(last.id);
-        settings().getState().selectedServerId = "removed-profile";
-        settings().getState().mavenWorkingDirectory = "legacy";
-        settings().getState().mavenGoals = "verify";
+        settings().update(state -> state.selectedServerId = "removed-profile");
+        settings().update(state -> state.mavenWorkingDirectory = "legacy");
+        settings().update(state -> state.mavenGoals = "verify");
         settings().migrateLegacyService();
         setup.applyInitialState(null, List.of(choice()));
         assertEquals(last.id, settings().getState().selectedServerId);
@@ -116,11 +116,11 @@ public class ProjectSetupTest extends BasePlatformTestCase {
             Path buildFile = write(temporary.getRoot().toPath(), "api/pom.xml", "<project/>");
             var service = new ServiceProfile();
             service.buildFilePath = buildFile.toString();
-            settings().services().add(service);
+            settings().update(state -> state.services.add(service));
             var server = new ServerProfile();
             server.home = temporary.getRoot().toString();
-            app().servers().add(server);
-            settings().getState().selectedServerId = server.id;
+            app().update(state -> state.servers.add(server));
+            settings().update(state -> state.selectedServerId = server.id);
             var watcher = ArtifactAutoDeployService.getInstance(getProject());
             setup.configureWatcher(null);
             awaitWatching(watcher, service.id, true);

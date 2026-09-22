@@ -32,15 +32,15 @@ public class NativeRunConfigurationTest extends BasePlatformTestCase {
         server.home = "/not-opened-during-editing";
         server.debugPort = 9876;
         server.jvmOptions = "-Dpassword=SENSITIVE_TEST_VALUE";
-        settings.servers().add(server);
+        settings.update(state -> state.servers.add(server));
         settings.setLastServerId(server.id);
-        WildFlyProjectSettings.getInstance(getProject()).getState().selectedServerId = "";
+        WildFlyProjectSettings.getInstance(getProject()).update(state -> state.selectedServerId = "");
     }
 
     @Override protected void tearDown() throws Exception {
         try {
             WildFlyApplicationSettings.getInstance().loadState(previous);
-            WildFlyProjectSettings.getInstance(getProject()).getState().selectedServerId = previousSelection;
+            WildFlyProjectSettings.getInstance(getProject()).update(state -> state.selectedServerId = previousSelection);
         } finally { super.tearDown(); }
     }
 
@@ -83,7 +83,7 @@ public class NativeRunConfigurationTest extends BasePlatformTestCase {
         var executor = DefaultDebugExecutor.getDebugExecutorInstance();
         var environment = ExecutionEnvironmentBuilder.create(executor, configuration).build();
         var state = configuration.getState(executor, environment);
-        server.debugPort = 1111;
+        WildFlyApplicationSettings.getInstance().update(data -> data.servers.getFirst().debugPort = 1111);
         var creator = (RemoteConnectionCreator) state;
         assertEquals("9876", creator.createRemoteConnection(environment).getDebuggerAddress());
         assertTrue(creator.isPollConnection());
@@ -108,9 +108,9 @@ public class NativeRunConfigurationTest extends BasePlatformTestCase {
 
     public void testRemovedProfileAndInvalidPortAreActionableConfigurationErrors() {
         var configuration = configuration(false);
-        server.debugPort = 70000;
+        WildFlyApplicationSettings.getInstance().update(state -> state.servers.getFirst().debugPort = 70000);
         assertThrows(RuntimeConfigurationError.class, configuration::checkConfiguration);
-        WildFlyApplicationSettings.getInstance().servers().clear();
+        WildFlyApplicationSettings.getInstance().update(state -> state.servers.clear());
         assertThrows(RuntimeConfigurationError.class, configuration::checkConfiguration);
     }
 }

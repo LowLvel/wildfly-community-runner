@@ -50,6 +50,12 @@ public final class ProjectSetupService implements Disposable {
                             if (changed == project) IdeUi.later(project, () -> disposed, () -> configureWatcher(null));
                         }
                     });
+            ApplicationManager.getApplication().getMessageBus().connect(this).subscribe(WildFlyApplicationSettings.CHANGED,
+                    new WildFlyApplicationSettings.Listener() {
+                        @Override public void serversChanged() {
+                            IdeUi.later(project, () -> disposed, () -> { reconcileServerSelection(); configureWatcher(null); });
+                        }
+                    });
             initializeSafely();
         });
     }
@@ -105,25 +111,32 @@ public final class ProjectSetupService implements Disposable {
     /** Runs on the IntelliJ application queue; user edits made during discovery take precedence. */
     void applyInitialState(ServerProfile candidate, List<BuildProjectDiscoveryService.BuildProjectChoice> choices) {
         var app = WildFlyApplicationSettings.getInstance();
-        var state = WildFlyProjectSettings.getInstance(project).getState();
-        if (candidate != null && !app.getState().environmentSetupCompleted && app.servers().isEmpty()) {
-            app.servers().add(new ServerProfile(candidate));
-        }
-        if (!app.servers().isEmpty()) app.getState().environmentSetupCompleted = true;
-        if (!state.onboardingCompleted && state.services.isEmpty()) {
-            for (var choice : choices) {
-                ServiceProfile service = discoveredService(choice);
-                state.services.add(service);
-                app.rememberService(service);
+        var settings = WildFlyProjectSettings.getInstance(project);
+        app.update(state -> {
+            if (candidate != null && !state.environmentSetupCompleted && state.servers.isEmpty())
+                state.servers.add(new ServerProfile(candidate));
+            if (!state.servers.isEmpty()) state.environmentSetupCompleted = true;
+        });
+        settings.update(state -> {
+            if (!state.onboardingCompleted && state.services.isEmpty())
+                for (var choice : choices) state.services.add(discoveredService(choice));
+            state.onboardingCompleted = true;
+        });
+        for (ServiceProfile service : settings.services()) app.rememberService(service);
+        reconcileServerSelection();
+    }
+
+    private void reconcileServerSelection() {
+        var app = WildFlyApplicationSettings.getInstance();
+        var servers = app.servers();
+        String last = app.lastServerId();
+        WildFlyProjectSettings.getInstance(project).update(state -> {
+            if (servers.stream().noneMatch(s -> s.id.equals(state.selectedServerId))) {
+                ServerProfile selection = servers.stream().filter(s -> s.id.equals(last)).findFirst()
+                        .orElse(servers.isEmpty() ? null : servers.getFirst());
+                state.selectedServerId = selection == null ? "" : selection.id;
             }
-        }
-        state.onboardingCompleted = true;
-        for (ServiceProfile service : state.services) app.rememberService(service);
-        if (app.servers().stream().noneMatch(s -> s.id.equals(state.selectedServerId))) {
-            ServerProfile selection = app.servers().stream().filter(s -> s.id.equals(app.lastServerId())).findFirst()
-                    .orElse(app.servers().isEmpty() ? null : app.servers().getFirst());
-            state.selectedServerId = selection == null ? "" : selection.id;
-        }
+        });
     }
 
     public static ServiceProfile discoveredService(BuildProjectDiscoveryService.BuildProjectChoice choice) {

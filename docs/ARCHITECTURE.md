@@ -81,3 +81,21 @@ Attach, Stop; the four deployment states and deployment-time hover; browser
 context overrides; configuration/home/deployment/server-log shortcuts; multiple
 profiles; configurable debug ports; Oracle TNS and JVM helpers. There is no
 per-service log feature.
+
+### Settings and global registry lifetime
+
+`WildFlyApplicationSettings` and `WildFlyProjectSettings` own their mutable state
+behind synchronized snapshot/update boundaries. Persistence receives detached
+copies; UI tables render a stable snapshot and retain selected IDs across refresh.
+`SettingsMigration` performs only pure normalization, clears transferred obsolete
+fields, repairs missing/duplicate IDs and invalid loaded ports, and records the
+schema version. Loading settings does not access files or the credential store.
+
+Global server and source change events are separate. `ProjectSetupService`
+reconciles selected servers and reconfigures artifact watches when server profiles
+change, even without a tool window. Remembering a source does not reset watches.
+`RememberedSourcesDialog` checks availability in the background and provides
+explicit forget/relink operations; unavailable paths remain recoverable.
+`WildFlyProcessService.dispose` removes plugin listeners and detaches platform
+process handlers, including launches completing during disposal, without killing
+application-wide servers.

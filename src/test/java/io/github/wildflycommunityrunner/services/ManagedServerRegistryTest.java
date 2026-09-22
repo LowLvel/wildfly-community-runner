@@ -12,8 +12,9 @@ import java.util.UUID;
 public class ManagedServerRegistryTest extends BasePlatformTestCase {
     private static final class FakeProcess extends ProcessHandler {
         int stops;
+        int detaches;
         @Override protected void destroyProcessImpl() { stops++; notifyProcessTerminated(0); }
-        @Override protected void detachProcessImpl() { notifyProcessDetached(); }
+        @Override protected void detachProcessImpl() { detaches++; notifyProcessDetached(); }
         @Override public boolean detachIsDefault() { return false; }
         @Override public OutputStream getProcessInput() { return null; }
         void exit() { notifyProcessTerminated(0); }
@@ -90,5 +91,33 @@ public class ManagedServerRegistryTest extends BasePlatformTestCase {
             assertFalse(registry.canForceStopDetected(profile));
         }
     }
-}
 
+    public void testDisposeDetachesSharedServersAndReleasesListenersWithoutStoppingThem() {
+        var registry = new WildFlyProcessService();
+        var profile = profile();
+        var process = new FakeProcess();
+        registry.registerManaged(profile, process, false);
+        process.startNotify();
+        assertEquals(1, registry.listenerCount());
+        registry.dispose();
+        assertEquals(0, registry.listenerCount());
+        assertEquals(0, process.stops);
+        assertEquals(1, process.detaches);
+        assertFalse(registry.isRunning(profile));
+        registry.dispose();
+        assertEquals(1, process.detaches);
+    }
+
+    public void testLaunchCompletingAfterDisposalDetachesAndDoesNotRecreateRegistry() {
+        var registry = new WildFlyProcessService();
+        registry.dispose();
+        var profile = profile();
+        var process = new FakeProcess();
+        registry.registerManaged(profile, process, false);
+        process.startNotify();
+        assertEquals(0, process.stops);
+        assertEquals(1, process.detaches);
+        assertEquals(0, registry.listenerCount());
+        assertFalse(registry.isRunning(profile));
+    }
+}

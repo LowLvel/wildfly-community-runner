@@ -25,7 +25,8 @@ public class WildFlyRunConfiguration extends RunConfigurationBase<RunConfigurati
         var settings = WildFlyApplicationSettings.getInstance();
         String projectSelection = WildFlyProjectSettings.getInstance(project).getState().selectedServerId;
         serverId = projectSelection == null || projectSelection.isBlank() ? settings.lastServerId() : projectSelection;
-        if (serverId.isBlank() && settings.servers().size() == 1) serverId = settings.servers().getFirst().id;
+        var servers = settings.servers();
+        if (serverId.isBlank() && servers.size() == 1) serverId = servers.getFirst().id;
     }
 
     public String getServerId() { return serverId; }
