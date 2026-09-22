@@ -6,6 +6,9 @@ import com.intellij.execution.executors.DefaultRunExecutor;
 import com.intellij.execution.process.*;
 import com.intellij.execution.runners.ExecutionEnvironment;
 import com.intellij.execution.runners.ExecutionEnvironmentBuilder;
+import com.intellij.execution.runners.ProgramRunner;
+import com.intellij.execution.ui.RunContentDescriptor;
+import com.intellij.openapi.util.Disposer;
 import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.util.Key;
@@ -37,11 +40,25 @@ public class NativeMavenRuntimeTest extends BasePlatformTestCase {
         Registry.get("maven.use.scripts").setValue(false, getTestRootDisposable());
         var captured = new AtomicReference<ExecutionEnvironment>();
         var handlers = new CopyOnWriteArrayList<ProcessHandler>();
+        var descriptors = new CopyOnWriteArrayList<RunContentDescriptor>();
         var argumentFiles = new CopyOnWriteArrayList<Path>();
         var output = new CopyOnWriteArrayList<String>();
         var operations = new ArrayList<BuildOperation>();
         var connection = getProject().getMessageBus().connect(getTestRootDisposable());
         connection.subscribe(ExecutionManager.EXECUTION_TOPIC, new ExecutionListener() {
+            @Override public void processStartScheduled(String executorId, ExecutionEnvironment environment) {
+                if (!(environment.getRunProfile() instanceof MavenRunConfiguration)) return;
+                ProgramRunner.Callback original = environment.getCallback();
+                environment.setCallback(new ProgramRunner.Callback() {
+                    @Override public void processStarted(RunContentDescriptor descriptor) {
+                        descriptors.add(descriptor);
+                        if (original != null) original.processStarted(descriptor);
+                    }
+                    @Override public void processNotStarted(Throwable cause) {
+                        if (original != null) original.processNotStarted(cause);
+                    }
+                });
+            }
             @Override public void processStarting(String executorId, ExecutionEnvironment environment, ProcessHandler handler) {
                 if (!(environment.getRunProfile() instanceof MavenRunConfiguration)) return;
                 captured.set(environment); handlers.add(handler);
@@ -99,6 +116,7 @@ public class NativeMavenRuntimeTest extends BasePlatformTestCase {
             assertEquals(2, argumentFiles.size());
             assertFalse(argumentFiles.get(0).equals(argumentFiles.get(1)));
             await(() -> argumentFiles.stream().noneMatch(Files::exists), Duration.ofSeconds(10), "Maven rerun did not release its private file");
+            assertEquals("Every native runner console must be owned by this fixture", 3, descriptors.size());
         } finally {
             connection.disconnect(); operations.forEach(BuildOperation::cancel);
             for (ProcessHandler handler : handlers) {
@@ -109,6 +127,7 @@ public class NativeMavenRuntimeTest extends BasePlatformTestCase {
             for (var descriptor : List.copyOf(manager.getAllDescriptors())) {
                 if (handlers.contains(descriptor.getProcessHandler())) manager.removeRunContent(DefaultRunExecutor.getRunExecutorInstance(), descriptor);
             }
+            descriptors.forEach(descriptor -> { if (!Disposer.isDisposed(descriptor)) Disposer.dispose(descriptor); });
             runner.getSettings().setJreName(previousJre); runner.getSettings().setVmOptions(previousOptions);
             TrustedProjects.setProjectTrusted(getProject(), trusted); temporary.delete();
         }

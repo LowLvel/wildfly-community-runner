@@ -56,7 +56,7 @@ public final class PrivateJvmOptions implements AutoCloseable {
             ByteBuffer bytes = charset.newEncoder().encode(CharBuffer.wrap(content));
             byte[] encoded = new byte[bytes.remaining()]; bytes.get(encoded); return encoded;
         } catch (CharacterCodingException error) {
-            throw new IOException("A sensitive JVM property contains characters unavailable in the system launcher encoding ("
+            throw new IOException("A JVM option contains characters unavailable in the system launcher encoding ("
                     + charset.name() + "). Use a UTF-8 system locale or a credential file supported by the application.");
         }
     }
@@ -71,6 +71,11 @@ public final class PrivateJvmOptions implements AutoCloseable {
         this.options = options; this.directory = directory; this.file = file; this.redactor = redactor;
     }
     public String options() { return options; }
+    public String visibleOptions() {
+        return file == null ? options : ParametersListUtil.join(ParametersListUtil.parse(options).stream()
+                .filter(argument -> !argument.equals("@" + file)).toList());
+    }
+    public String argumentFileReference() { return file == null ? "" : ParametersListUtil.join(List.of("@" + file)); }
     public boolean containsSecrets() { return file != null; }
     public SecretRedactor redactor() { return redactor; }
     Path file() { return file; }

@@ -59,4 +59,12 @@ public class WildFlyPathsTest {
         assertThrows(IllegalArgumentException.class, () -> WildFlyPaths.configurationArgument(java.util.List.of("-c", "a.xml", "--server-config=b.xml"), "standalone.xml"));
         assertEquals("readonly.xml", WildFlyPaths.configurationArgument(java.util.List.of("--read-only-server-config=readonly.xml"), "standalone.xml"));
     }
+
+    @Test public void rejectsDirectoryOverridesThatTheVendorScriptsWouldTruncate() {
+        var profile = profile();
+        profile.jvmOptions = "-Djboss.server.base.dir=\"/tmp/server base\"";
+        assertTrue(WildFlyPaths.validate(profile).contains("standalone scripts"));
+        profile.jvmOptions = ""; profile.startupArguments = "-Djboss.server.config.dir=\"/tmp/config&dir\"";
+        assertTrue(WildFlyPaths.validate(profile).contains("jboss.server.config.dir"));
+    }
 }

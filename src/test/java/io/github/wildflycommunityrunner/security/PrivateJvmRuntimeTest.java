@@ -56,6 +56,19 @@ public class PrivateJvmRuntimeTest {
         }
     }
 
+    @Test public void javaLauncherEnvironmentReadsAPrivateArgumentFileUnderASpacedPath() throws Exception {
+        Path root = temporary.newFolder("launcher environment with spaces").toPath();
+        String value = "synthetic-argument-file-value";
+        try (var options = PrivateJvmOptions.create("", List.of("-Dordinary=visible"),
+                List.of("-Dwildfly.test.password=" + value), List.of(value), root)) {
+            var command = new ArrayList<String>();
+            command.add(Path.of(System.getProperty("java.home"), "bin", windows() ? "java.exe" : "java").toString());
+            command.addAll(ParametersListUtil.parse(options.visibleOptions()));
+            command.add("-jar"); command.add(probeJar(root).toString());
+            run(command, root, value, 30, null, options.argumentFileReference());
+        }
+    }
+
     @Test public void unrepresentableCharactersFailWithoutSubstitutionOrSecretInTheError() throws Exception {
         String value = "synthetic日本語";
         var error = assertThrows(java.io.IOException.class,
@@ -67,10 +80,14 @@ public class PrivateJvmRuntimeTest {
     }
 
     private void run(List<String> command, Path directory, String expected, long timeout, String launcherOptions) throws Exception {
+        run(command, directory, expected, timeout, launcherOptions, null);
+    }
+    private void run(List<String> command, Path directory, String expected, long timeout, String launcherOptions, String jdkOptions) throws Exception {
         Path log = directory.resolve("process-output.txt");
         var builder = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
         builder.environment().put("EXPECTED_TEST_SECRET", expected);
         builder.environment().put("GRADLE_USER_HOME", directory.resolve("gradle-user-home").toString());
+        if (jdkOptions != null) builder.environment().put("JDK_JAVA_OPTIONS", jdkOptions);
         if (launcherOptions != null) {
             builder.environment().put("JAVA_OPTS", "-Dorg.gradle.jvmargs=-Xmx96m");
             builder.environment().put("GRADLE_OPTS", "-Dorg.gradle.jvmargs=-Xmx128m " + launcherOptions);

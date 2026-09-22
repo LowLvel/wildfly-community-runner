@@ -59,6 +59,19 @@ public class JvmSecretsTest {
         } finally { secrets.dispose(); }
     }
 
+    @Test public void wildflyScriptOptionsKeepIdentityVisibleAndQuotedPropertiesInOriginalOrder() throws Exception {
+        var store = new MemoryStore(); var secrets = new JvmSecrets(store);
+        try (var runtime = secrets.prepareForWildFly("-Xmx512m -Djboss.server.base.dir=/tmp/instance"
+                + " -Doracle.net.tns_admin=first \"-Doracle.net.tns_admin=/tmp/TNS directory\" -Doracle.net.tns_admin=last")) {
+            assertEquals("-Xmx512m -Djboss.server.base.dir=/tmp/instance", runtime.visibleOptions());
+            String file = Files.readString(runtime.file());
+            assertTrue(file.indexOf("=first") < file.indexOf("TNS directory"));
+            assertTrue(file.indexOf("TNS directory") < file.indexOf("=last"));
+            assertEquals(List.of("@" + runtime.file()), ParametersListUtil.parse(runtime.argumentFileReference()));
+            assertTrue(store.values.isEmpty());
+        } finally { secrets.dispose(); }
+    }
+
     @Test public void cancelledProtectionRemovesOnlyItsNewEntries() {
         var store = new MemoryStore(); var secrets = new JvmSecrets(store);
         store.values.put("existing", "unchanged");

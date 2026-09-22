@@ -90,12 +90,34 @@ public final class JvmSecrets implements Disposable {
     }
 
     public PrivateJvmOptions prepare(String options) throws IOException {
+        return prepare(options, false);
+    }
+
+    /** WildFly scripts reparse JAVA_OPTS; quoted values must reach Java through an argument file. */
+    public PrivateJvmOptions prepareForWildFly(String options) throws IOException {
+        return prepare(options, true);
+    }
+
+    private PrivateJvmOptions prepare(String options, boolean scriptSafe) throws IOException {
         backgroundOnly();
         String original = options == null ? "" : options;
         SensitiveProperties.validateQuoting(original);
+        List<String> arguments = ParametersListUtil.parse(original);
+        Set<String> fileProperties = new java.util.HashSet<>();
+        if (scriptSafe) for (String argument : arguments) {
+            if (scriptSensitive(argument) && argument.startsWith("-D") && argument.indexOf('=') > 2)
+                fileProperties.add(argument.substring(0, argument.indexOf('=')));
+        }
         List<String> visible = new ArrayList<>(), protectedArgs = new ArrayList<>(), values = new ArrayList<>();
-        for (String argument : ParametersListUtil.parse(original)) {
-            if (!SensitiveProperties.protectedArgument(argument)) { visible.add(argument); continue; }
+        for (String argument : arguments) {
+            if (!SensitiveProperties.protectedArgument(argument)) {
+                String key = argument.contains("=") ? argument.substring(0, argument.indexOf('=')) : argument;
+                if (scriptSafe && (scriptSensitive(argument) || fileProperties.contains(key))) {
+                    if (argument.startsWith("@")) throw new IllegalArgumentException("A user JVM argument-file path passed to WildFly must not contain spaces or shell metacharacters.");
+                    protectedArgs.add(argument);
+                } else visible.add(argument);
+                continue;
+            }
             int equals = argument.indexOf('=');
             String value = argument.substring(equals + 1);
             var reference = SensitiveProperties.REFERENCE.matcher(value);
@@ -114,8 +136,12 @@ public final class JvmSecrets implements Disposable {
             values.add(value);
             protectedArgs.add(argument.substring(0, equals + 1) + value);
         }
-        PrivateJvmOptions prepared = PrivateJvmOptions.create(original, visible, protectedArgs, values);
+        PrivateJvmOptions prepared = PrivateJvmOptions.create(scriptSafe ? ParametersListUtil.join(visible) : original, visible, protectedArgs, values);
         return track(prepared);
+    }
+
+    private static boolean scriptSensitive(String argument) {
+        return argument.chars().anyMatch(c -> Character.isWhitespace(c) || "\"'&|<>^%$`!".indexOf(c) >= 0);
     }
 
     public PrivateJvmOptions prepareGradleLauncher(PrivateJvmOptions daemon) throws IOException {

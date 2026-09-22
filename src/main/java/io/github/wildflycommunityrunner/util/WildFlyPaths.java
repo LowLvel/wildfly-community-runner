@@ -114,6 +114,14 @@ public final class WildFlyPaths {
         if (profile.name == null || profile.name.isBlank()) return "Server name is required.";
         if (profile.home == null || profile.home.isBlank()) return "WildFly Home is required.";
         Path home = home(profile);
+        for (var option : properties(profileArguments(profile)).entrySet()) {
+            if (List.of("jboss.server.base.dir", "jboss.server.config.dir", "jboss.server.log.dir").contains(option.getKey())
+                    && option.getValue().chars().anyMatch(c -> Character.isWhitespace(c) || "\"'&|<>^%$`!".indexOf(c) >= 0)) {
+                return "WildFly's standalone scripts cannot reliably parse " + option.getKey()
+                        + " containing spaces or shell metacharacters. Use a directory override without those characters."
+                        + " WildFly Home itself may contain spaces when using its default standalone directories.";
+            }
+        }
         if (!Files.isDirectory(home)) return "WildFly Home does not exist: " + home;
         if (!Files.isRegularFile(home.resolve("jboss-modules.jar"))) return "Cannot find jboss-modules.jar under: " + home;
         if (!Files.isRegularFile(startupScript(profile))) return "Cannot find WildFly startup script under: " + home.resolve("bin");

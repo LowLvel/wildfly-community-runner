@@ -65,6 +65,14 @@ public class WildFlyServerDetectorTest {
         assertTrue(WildFlyServerDetector.matches(profile, "java", arguments));
     }
 
+    @Test public void recognizesTheDistributionSerialFilterButNotArbitraryArgumentFiles() throws Exception {
+        var profile = profile(); var arguments = arguments(profile);
+        arguments.addFirst("@" + Path.of(profile.home, "bin", "jdk.serialFilter"));
+        assertTrue(WildFlyServerDetector.matches(profile, "java", arguments));
+        arguments.set(0, "@" + Path.of(profile.home, "other.args"));
+        assertFalse(WildFlyServerDetector.matches(profile, "java", arguments));
+    }
+
     @Test public void absentMalformedOrUnrelatedProcessArgumentsNeverMatch() throws Exception {
         var profile = profile();
         assertFalse(WildFlyServerDetector.matches(profile, "java", List.of()));

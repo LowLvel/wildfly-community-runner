@@ -45,7 +45,7 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
         boolean trusted = TrustedProjects.isProjectTrusted(getProject());
         var server = new ServerProfile(); server.name = "Runtime smoke"; server.home = home;
         server.javaHome = System.getProperty("java.home"); server.host = "127.0.0.1";
-        Path root = temporary.getRoot().toPath(), base = root.resolve("server base with spaces");
+        Path root = temporary.getRoot().toPath(), base = root.resolve("server-base");
         var watcher = ArtifactAutoDeployService.getInstance(getProject());
         var processes = WildFlyProcessService.getInstance();
         try {
@@ -59,7 +59,8 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
                 server.jvmOptions = "-Xms128m -Xmx512m \"-Djboss.server.base.dir=" + base + "\""
                         + " -Djboss.socket.binding.port-offset=" + offset
                         + " -Djboss.bind.address=127.0.0.1 -Djboss.bind.address.management=127.0.0.1"
-                        + " -Dwildfly.fixture.password=${env:WILDFLY_SMOKE_PASSWORD}";
+                        + " -Dwildfly.fixture.password=${env:WILDFLY_SMOKE_PASSWORD}"
+                        + " \"-Doracle.net.tns_admin=" + base.resolve("tns with spaces") + "\"";
                 return null;
             });
             settings.loadState(new WildFlyApplicationSettings.StateData());
@@ -173,9 +174,10 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
     }
     private void waitHttp(ServerProfile server, String path, String expected) throws Exception {
         boolean success = background(() -> {
-            var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+            try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()) {
             long deadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
             while (System.nanoTime() < deadline) {
+                if (!sessions.isEmpty() && sessions.getLast().getProcessHandler().isProcessTerminated()) return false;
                 try {
                     var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.httpPort + path)).timeout(Duration.ofSeconds(3)).build();
                     var response = client.send(request, HttpResponse.BodyHandlers.ofString());
@@ -184,6 +186,7 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
                 Thread.sleep(200);
             }
             return false;
+            }
         });
         assertTrue(diagnostic("WildFly HTTP response did not become ready: " + path), success);
     }
@@ -217,7 +220,9 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
         try (var output = new ZipOutputStream(Files.newOutputStream(temporary))) {
             output.putNextEntry(new ZipEntry("index.jsp"));
             String jsp = "<%@ page contentType=\"text/plain\" %>" + version
-                    + ":<%= java.util.Objects.equals(System.getProperty(\"wildfly.fixture.password\"), System.getenv(\"WILDFLY_SMOKE_PASSWORD\")) ? \"credential-ok\" : \"credential-missing\" %>";
+                    + ":<%= java.util.Objects.equals(System.getProperty(\"wildfly.fixture.password\"), System.getenv(\"WILDFLY_SMOKE_PASSWORD\"))"
+                    + " && java.nio.file.Path.of(System.getProperty(\"jboss.server.base.dir\"), \"tns with spaces\").toString().equals(System.getProperty(\"oracle.net.tns_admin\"))"
+                    + " ? \"credential-ok\" : \"credential-missing\" %>";
             output.write(jsp.getBytes(StandardCharsets.UTF_8)); output.closeEntry();
         }
         Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);

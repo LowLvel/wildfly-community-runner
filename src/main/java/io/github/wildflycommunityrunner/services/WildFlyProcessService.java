@@ -253,10 +253,20 @@ public final class WildFlyProcessService implements com.intellij.openapi.Disposa
         String combined = ((inherited == null ? "" : inherited.trim()) + " "
                 + (profile.jvmOptions == null ? "" : profile.jvmOptions.trim())).trim();
         JvmSecrets secretManager = JvmSecrets.getInstance();
-        PrivateJvmOptions options = secretManager.prepare(combined);
+        PrivateJvmOptions options = secretManager.prepareForWildFly(combined);
         KillableProcessHandler handler;
         try {
-            if (!options.options().isBlank()) commandLine.withEnvironment("JAVA_OPTS", options.options());
+            if (!options.options().isBlank()) {
+                // The distribution scripts split directory overrides and reparse quotes in
+                // JAVA_OPTS. Keep safe identity/ordinary arguments visible; let Java itself
+                // expand the private file, including when the temp path contains spaces.
+                commandLine.withEnvironment("JAVA_OPTS", options.visibleOptions().isBlank() ? " " : options.visibleOptions());
+                if (!options.argumentFileReference().isBlank()) {
+                    String inheritedJdk = System.getenv("JDK_JAVA_OPTIONS");
+                    commandLine.withEnvironment("JDK_JAVA_OPTIONS", ((inheritedJdk == null ? "" : inheritedJdk.trim())
+                            + " " + options.argumentFileReference()).trim());
+                }
+            }
             output.accept("Starting " + profile.name + (debug ? " in DEBUG mode on port " + profile.debugPort : "")
                     + " using " + profile.configuration);
             if (disposed) throw new IllegalStateException("WildFly integration has been disposed.");

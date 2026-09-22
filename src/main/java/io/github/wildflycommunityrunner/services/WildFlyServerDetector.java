@@ -76,7 +76,7 @@ public final class WildFlyServerDetector {
             Path command = Path.of(executable);
             if (command.getFileName() == null || !Set.of("java", "java.exe", "javaw.exe")
                     .contains(command.getFileName().toString().toLowerCase(Locale.ROOT))) return false;
-            int entry = standaloneEntry(arguments);
+            int entry = standaloneEntry(arguments, WildFlyPaths.home(profile).resolve("bin/jdk.serialFilter"));
             if (entry < 0) return false;
             var properties = WildFlyPaths.properties(arguments);
             String homeValue = properties.get("jboss.home.dir");
@@ -96,12 +96,16 @@ public final class WildFlyServerDetector {
         } catch (IllegalArgumentException | IndexOutOfBoundsException ignored) { return false; }
     }
 
-    private static int standaloneEntry(List<String> arguments) {
+    private static int standaloneEntry(List<String> arguments, Path serialFilter) {
         boolean modulesLauncher = false;
         for (int i = 0; i < arguments.size(); i++) {
             String argument = arguments.get(i);
             if (!modulesLauncher) {
-                if (argument.equals("-jar")) {
+                if (argument.startsWith("@") && absolute(WildFlyPaths.unquote(argument.substring(1))).equals(serialFilter)) {
+                    // Recent WildFly distributions supply their JDK serial filter through
+                    // this fixed argument file. Arbitrary @files remain unverified.
+                    continue;
+                } else if (argument.equals("-jar")) {
                     if (++i >= arguments.size()) return -1;
                     Path fileName = Path.of(WildFlyPaths.unquote(arguments.get(i))).getFileName();
                     if (fileName == null || !fileName.toString().equals("jboss-modules.jar")) return -1;
