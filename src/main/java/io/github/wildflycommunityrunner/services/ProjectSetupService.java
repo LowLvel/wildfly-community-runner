@@ -66,7 +66,8 @@ public final class ProjectSetupService implements Disposable {
         settings.migrateLegacyService();
         var state = settings.getState();
         boolean discover = !state.onboardingCompleted && state.services.isEmpty();
-        boolean findHome = WildFlyApplicationSettings.getInstance().servers().isEmpty();
+        var applicationSettings = WildFlyApplicationSettings.getInstance();
+        boolean findHome = !applicationSettings.getState().environmentSetupCompleted && applicationSettings.servers().isEmpty();
         initialization = ApplicationManager.getApplication().executeOnPooledThread(() -> {
             try {
                 ServerProfile candidate = findHome ? environmentProfile(System.getenv()) : null;
@@ -105,7 +106,10 @@ public final class ProjectSetupService implements Disposable {
     void applyInitialState(ServerProfile candidate, List<BuildProjectDiscoveryService.BuildProjectChoice> choices) {
         var app = WildFlyApplicationSettings.getInstance();
         var state = WildFlyProjectSettings.getInstance(project).getState();
-        if (candidate != null && app.servers().isEmpty()) app.servers().add(new ServerProfile(candidate));
+        if (candidate != null && !app.getState().environmentSetupCompleted && app.servers().isEmpty()) {
+            app.servers().add(new ServerProfile(candidate));
+        }
+        if (!app.servers().isEmpty()) app.getState().environmentSetupCompleted = true;
         if (!state.onboardingCompleted && state.services.isEmpty()) {
             for (var choice : choices) {
                 ServiceProfile service = discoveredService(choice);

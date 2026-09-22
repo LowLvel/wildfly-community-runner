@@ -21,6 +21,7 @@ public final class WildFlyApplicationSettings implements PersistentStateComponen
         public List<ServerProfile> servers = new ArrayList<>();
         public List<ServiceProfile> knownServices = new ArrayList<>();
         public String lastServerId = "";
+        public boolean environmentSetupCompleted;
     }
 
     private StateData state = new StateData();

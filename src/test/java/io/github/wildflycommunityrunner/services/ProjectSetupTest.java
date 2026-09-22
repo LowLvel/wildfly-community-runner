@@ -61,6 +61,17 @@ public class ProjectSetupTest extends BasePlatformTestCase {
         setup.applyInitialState(server, List.of(choice()));
         assertTrue(settings().services().isEmpty());
         assertEquals(1, app().servers().size());
+        app().servers().clear();
+        setup.applyInitialState(server, List.of(choice()));
+        assertTrue("A removed environment profile must not reappear", app().servers().isEmpty());
+    }
+
+    public void testExplicitRemovalWhileSetupIsQueuedSuppressesLateDefaults() {
+        app().getState().environmentSetupCompleted = true;
+        settings().getState().onboardingCompleted = true;
+        setup.applyInitialState(new ServerProfile(), List.of(choice()));
+        assertTrue(app().servers().isEmpty());
+        assertTrue(settings().services().isEmpty());
     }
 
     public void testUserChangesDuringDiscoveryWinOverInitialDefaults() {

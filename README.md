@@ -9,11 +9,12 @@ Gradle services in the background. Existing service settings take precedence, an
 removing a service does not cause it to reappear on the next project open. Use
 **Discover Projects** to add services later.
 
-If no global server profiles exist, a valid `WILDFLY_HOME` (then `JBOSS_HOME` as a
+If global server setup has not yet been completed, a valid `WILDFLY_HOME` (then `JBOSS_HOME` as a
 fallback) supplies a default standalone profile. Otherwise use the visible **Add
 server…** button and select WildFly Home; `standalone.xml`, HTTP port 8080, and debug
 port 8787 are defaults. Environment detection checks only those explicit paths.
 It does not download WildFly or start/build/deploy anything during setup.
+Removing a profile prevents environment detection from silently recreating it.
 
 Saved Auto Redeploy watches initialize when a trusted project opens, including
 when the WildFly tool window stays closed. Safe Mode disables automatic redeploy;

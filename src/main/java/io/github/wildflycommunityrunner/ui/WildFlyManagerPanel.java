@@ -687,6 +687,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         int answer = JOptionPane.showConfirmDialog(this, message, "Remove Service", JOptionPane.YES_NO_OPTION);
         if (answer != JOptionPane.YES_OPTION) return;
         Set<String> ids = new LinkedHashSet<>();
+        projectState().onboardingCompleted = true;
         for (ServiceProfile service : selected) ids.add(service.id);
         projectState().services.removeIf(service -> ids.contains(service.id));
         projectState().selectedServiceId = "";
@@ -969,6 +970,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         ServerProfileDialog dialog = new ServerProfileDialog(project, null);
         if (!dialog.showAndGet()) return;
         ServerProfile profile = dialog.getProfile();
+        WildFlyApplicationSettings.getInstance().getState().environmentSetupCompleted = true;
         WildFlyApplicationSettings.getInstance().servers().add(profile);
         refreshServers();
         serverCombo.setSelectedItem(profile);
@@ -997,6 +999,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         if (current == null) return;
         int answer = JOptionPane.showConfirmDialog(this, "Remove server profile '" + current.name + "'?", "Remove WildFly Server", JOptionPane.YES_NO_OPTION);
         if (answer != JOptionPane.YES_OPTION) return;
+        WildFlyApplicationSettings.getInstance().getState().environmentSetupCompleted = true;
         WildFlyApplicationSettings.getInstance().servers().removeIf(p -> p.id.equals(current.id));
         refreshServers();
         saveSelectedServer();
