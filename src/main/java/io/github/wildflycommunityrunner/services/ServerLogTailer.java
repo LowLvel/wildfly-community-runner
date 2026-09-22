@@ -75,8 +75,10 @@ public final class ServerLogTailer {
 
     private Snapshot snapshot(String status) { return new Snapshot(text.toString(), status); }
 
-    private static boolean sameFile(BasicFileAttributes left, BasicFileAttributes right) {
-        return Objects.equals(left.fileKey(), right.fileKey()) && left.creationTime().equals(right.creationTime());
+    static boolean sameFile(BasicFileAttributes left, BasicFileAttributes right) {
+        // Providers may report lastModifiedTime as an unavailable creationTime.
+        // A real file key is stable; prefix/anchor/size checks cover providers without one.
+        return Objects.equals(left.fileKey(), right.fileKey());
     }
     private static boolean startsWith(byte[] value, byte[] beginning) {
         if (value.length < beginning.length) return false;

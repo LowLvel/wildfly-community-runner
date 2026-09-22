@@ -99,6 +99,26 @@ public class ServerLogTailerTest {
         assertTrue(text.length() <= ServerLogTailer.MAX_TEXT); assertTrue(text.endsWith("last\n"));
     }
 
+    @Test public void changingFallbackCreationTimesDoNotTurnEveryAppendIntoARotation() {
+        assertTrue(ServerLogTailer.sameFile(attributes("same file", 1), attributes("same file", 2)));
+        assertTrue(ServerLogTailer.sameFile(attributes(null, 1), attributes(null, 2)));
+        assertFalse(ServerLogTailer.sameFile(attributes("first file", 1), attributes("second file", 1)));
+    }
+
+    private static java.nio.file.attribute.BasicFileAttributes attributes(Object key, long time) {
+        return new java.nio.file.attribute.BasicFileAttributes() {
+            @Override public java.nio.file.attribute.FileTime lastModifiedTime() { return java.nio.file.attribute.FileTime.fromMillis(time); }
+            @Override public java.nio.file.attribute.FileTime lastAccessTime() { return lastModifiedTime(); }
+            @Override public java.nio.file.attribute.FileTime creationTime() { return lastModifiedTime(); }
+            @Override public boolean isRegularFile() { return true; }
+            @Override public boolean isDirectory() { return false; }
+            @Override public boolean isSymbolicLink() { return false; }
+            @Override public boolean isOther() { return false; }
+            @Override public long size() { return time; }
+            @Override public Object fileKey() { return key; }
+        };
+    }
+
     @Test public void malformedUtf8DoesNotStopFollowingLaterLines() throws Exception {
         var tailer = new ServerLogTailer(); Path file = path();
         Files.write(file, new byte[]{(byte) 0xff, '\n'});
