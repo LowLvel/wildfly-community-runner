@@ -5,6 +5,6 @@ public final class ProcessProbe {
     public static void main(String[] args) throws InterruptedException {
         System.out.println("ready");
         System.out.flush();
-        Thread.sleep(30_000);
+        Thread.sleep(60_000);
     }
 }

@@ -24,6 +24,12 @@ public final class WildFlyServerDetector {
         return matchingProcesses(profile, false);
     }
 
+    /** Launch preflight must not reuse a snapshot taken before another process was started. */
+    static List<ProcessHandle> matchingProcessesFresh(ServerProfile profile) {
+        if (isWindows() && profile != null && isLocalHost(profile.host)) WindowsProcessQuery.read(true);
+        return matchingProcesses(profile);
+    }
+
     private static List<ProcessHandle> matchingProcesses(ServerProfile profile, boolean exactConfiguration) {
         if (profile == null || !isLocalHost(profile.host)) return List.of();
         List<ProcessHandle> matches = new ArrayList<>();

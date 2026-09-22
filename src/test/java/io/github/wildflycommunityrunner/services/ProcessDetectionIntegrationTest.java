@@ -32,8 +32,8 @@ public class ProcessDetectionIntegrationTest extends BasePlatformTestCase {
                 output.closeEntry();
             }
             boolean windows = System.getProperty("os.name", "").startsWith("Windows");
-            Path java = Path.of(System.getProperty("java.home"), "bin", windows ? "java.exe" : "java");
-            process = new ProcessBuilder(java.toString(), "-jar", jar.toString(), "-mp", home.resolve("modules").toString(),
+            Path javaExecutable = Path.of(System.getProperty("java.home"), "bin", windows ? "java.exe" : "java");
+            process = new ProcessBuilder(javaExecutable.toString(), "-jar", jar.toString(), "-mp", home.resolve("modules").toString(),
                     "org.jboss.as.standalone", "-Djboss.home.dir=" + home, "-c", "standalone.xml").redirectErrorStream(true).start();
             Process child = process;
             String ready = ApplicationManager.getApplication().executeOnPooledThread(
@@ -41,14 +41,29 @@ public class ProcessDetectionIntegrationTest extends BasePlatformTestCase {
             assertEquals("ready", ready);
             var profile = new ServerProfile();
             profile.home = home.toString();
-            ApplicationManager.getApplication().executeOnPooledThread(() -> {
-                assertTrue(WildFlyServerDetector.matchingProcesses(profile).stream().anyMatch(p -> p.pid() == child.pid()));
-                assertTrue(WildFlyServerDetector.verifies(profile, child.toHandle()));
+            String failure = ApplicationManager.getApplication().executeOnPooledThread(() -> {
+                // Periodic status uses a one-second cache. A process born after that snapshot appears on the next refresh.
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+                boolean detected;
+                do {
+                    detected = WildFlyServerDetector.matchingProcesses(profile).stream().anyMatch(p -> p.pid() == child.pid());
+                    if (!detected) Thread.sleep(200);
+                } while (!detected && System.nanoTime() < deadline);
+                if (!detected) {
+                    var row = windows ? WindowsProcessQuery.read(true).stream().filter(c -> c.pid() == child.pid()).findFirst() : java.util.Optional.<WindowsProcessQuery.Command>empty();
+                    return "Child process not detected: alive=" + child.isAlive() + ", nativeArgs=" + child.info().arguments().isPresent()
+                            + ", CIM row=" + row.isPresent() + ", nativeStart=" + child.info().startInstant()
+                            + ", CIM start=" + row.map(WindowsProcessQuery.Command::startedMillis)
+                            + ", argumentsMatch=" + row.map(c -> WildFlyServerDetector.matches(profile, c.executable(), c.arguments()));
+                }
+                if (!WildFlyServerDetector.verifies(profile, child.toHandle())) return "Fresh process identity did not match";
                 profile.configuration = "standalone-full.xml";
-                assertFalse(WildFlyServerDetector.verifies(profile, child.toHandle()));
-                assertTrue(WildFlyServerDetector.matchingProcesses(profile).isEmpty());
-                assertTrue(WildFlyServerDetector.matchingServerBase(profile).stream().anyMatch(p -> p.pid() == child.pid()));
-            }).get(20, TimeUnit.SECONDS);
+                if (WildFlyServerDetector.verifies(profile, child.toHandle())) return "Wrong configuration matched";
+                if (!WildFlyServerDetector.matchingProcesses(profile).isEmpty()) return "Wrong configuration appeared as running";
+                if (WildFlyServerDetector.matchingServerBase(profile).stream().noneMatch(p -> p.pid() == child.pid())) return "Server base conflict not detected";
+                return null;
+            }).get(40, TimeUnit.SECONDS);
+            assertNull(failure, failure);
         } finally {
             if (process != null) { process.destroyForcibly(); process.waitFor(10, TimeUnit.SECONDS); }
             temporary.delete();

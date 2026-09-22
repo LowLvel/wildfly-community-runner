@@ -55,7 +55,7 @@ final class WindowsProcessQuery {
             output = ApplicationManager.getApplication().executeOnPooledThread(() -> {
                 try (var stream = query.getInputStream()) { return stream.readNBytes(MAX_OUTPUT + 1); }
             });
-            if (!process.waitFor(3, TimeUnit.SECONDS) || process.exitValue() != 0) return List.of();
+            if (!process.waitFor(5, TimeUnit.SECONDS) || process.exitValue() != 0) return List.of();
             byte[] bytes = output.get(1, TimeUnit.SECONDS);
             if (bytes.length > MAX_OUTPUT) return List.of();
             return parseRows(new String(bytes, StandardCharsets.US_ASCII));

@@ -186,11 +186,12 @@ public final class WildFlyProcessService {
         boolean anotherConfiguration = processes.entrySet().stream().anyMatch(entry ->
                 entry.getKey().identity().base().equals(identity.base()) && !entry.getKey().identity().equals(identity)
                         && !entry.getValue().handler().isProcessTerminated());
-        if (anotherConfiguration || (WildFlyServerDetector.matchingProcesses(profile).isEmpty()
+        boolean externallyRunning = !WildFlyServerDetector.matchingProcessesFresh(profile).isEmpty();
+        if (anotherConfiguration || (!externallyRunning
                 && !WildFlyServerDetector.matchingServerBase(profile).isEmpty())) {
             throw new IllegalStateException("Another WildFly configuration is using this server base directory. Stop it first or configure a separate jboss.server.base.dir.");
         }
-        if (!isDetectedRunning(profile) && WildFlyServerDetector.isPortOpen(profile)) {
+        if (!externallyRunning && !isRunning(profile) && WildFlyServerDetector.isPortOpen(profile)) {
             throw new IllegalStateException("Port " + endpoint(profile) + " is occupied, but its process could not be verified as this WildFly instance. Check the port and server profile before starting.");
         }
     }
