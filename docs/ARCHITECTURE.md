@@ -120,6 +120,13 @@ files from launches without a handler are released at project disposal. Gradle g
 avoiding nested cmd.exe quoting, and uses a single-use daemon. Earlier CLI and
 environment JVM overrides cannot replace the service profile's configured options. WildFly keeps nonsensitive
 server identity properties visible to its launcher and the process detector.
+Quoted ordinary WildFly properties join the private file in their original order,
+including other occurrences of the same property key. `JDK_JAVA_OPTIONS` carries
+the file reference directly to Java, avoiding distribution-script quote parsing.
+Custom base/config/log overrides with spaces or shell metacharacters are rejected
+before launch; the vendor scripts cannot reliably parse them. Detection recognizes
+the distribution's fixed `bin/jdk.serialFilter` file and rejects arbitrary launcher
+argument files whose entry point cannot be established.
 Process cleanup holds the already-created credential service instead of looking
 up services during container disposal. `SecretRedactor.Lines` buffers bounded
 stdout/stderr lines so a secret split across process output chunks is not exposed.

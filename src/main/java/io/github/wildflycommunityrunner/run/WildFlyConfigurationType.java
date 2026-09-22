@@ -3,13 +3,13 @@ package io.github.wildflycommunityrunner.run;
 import com.intellij.execution.configurations.ConfigurationFactory;
 import com.intellij.execution.configurations.ConfigurationTypeBase;
 import com.intellij.execution.configurations.RunConfiguration;
-import com.intellij.icons.AllIcons;
+import io.github.wildflycommunityrunner.ui.WildFlyIcons;
 import com.intellij.openapi.project.Project;
 import org.jetbrains.annotations.NotNull;
 
 public final class WildFlyConfigurationType extends ConfigurationTypeBase {
     public WildFlyConfigurationType() {
-        super("WildFlyCommunityRunner", "WildFly", "Run or debug a local WildFly server", AllIcons.RunConfigurations.Application);
+        super("WildFlyCommunityRunner", "WildFly", "Run or debug a local WildFly server", WildFlyIcons.SERVER);
         addFactory(new Factory(this, false));
         addFactory(new Factory(this, true));
     }

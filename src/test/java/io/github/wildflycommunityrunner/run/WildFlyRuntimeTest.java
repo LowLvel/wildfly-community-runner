@@ -51,6 +51,7 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
         try {
             background(() -> {
                 Path configuration = base.resolve("configuration"); Files.createDirectories(configuration);
+                Files.createDirectories(base.resolve("deployments"));
                 try (var entries = Files.list(Path.of(home, "standalone", "configuration"))) {
                     for (Path entry : entries.toList()) if (Files.isRegularFile(entry))
                         Files.copy(entry, configuration.resolve(entry.getFileName().toString()));
@@ -177,7 +178,7 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
             try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()) {
             long deadline = System.nanoTime() + Duration.ofSeconds(90).toNanos();
             while (System.nanoTime() < deadline) {
-                if (!sessions.isEmpty() && sessions.getLast().getProcessHandler().isProcessTerminated()) return false;
+                if (!sessions.isEmpty() && sessions.stream().allMatch(session -> session.getProcessHandler().isProcessTerminated())) return false;
                 try {
                     var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + server.httpPort + path)).timeout(Duration.ofSeconds(3)).build();
                     var response = client.send(request, HttpResponse.BodyHandlers.ofString());

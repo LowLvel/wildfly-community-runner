@@ -1,6 +1,21 @@
 # WildFly Community Runner
 
-Local WildFly integration for IntelliJ IDEA Community, optimized for multi-service Maven/Gradle development.
+Local WildFly integration for IntelliJ IDEA Community and compatible IntelliJ IDEA releases.
+Build and deploy Maven/Gradle services, manage shared local servers, and use native
+Run/Debug configurations. Version **0.6.0** is the Marketplace release candidate.
+
+[Changelog](CHANGELOG.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) ·
+[Validation](docs/VALIDATION.md) · [Contributing](CONTRIBUTING.md) · [Releasing](docs/RELEASING.md)
+
+## Installation
+
+Use IntelliJ IDEA 2025.1–2026.2 with its Java and Maven plugins enabled. Download
+the candidate ZIP from a successful GitHub Actions run, then choose **Settings →
+Plugins → gear menu → Install Plugin from Disk**. Select the plugin ZIP, without
+extracting it. The initial Marketplace listing still requires maintainer submission.
+
+Install WildFly separately and select a JDK supported by that server version.
+The plugin supports local standalone mode and requires no paid IDE application-server integration.
 
 ## First use
 
@@ -89,6 +104,10 @@ An externally started local JVM is shown as **Detected local WildFly** when its 
 For detected servers, Stop requires a unique local process match and rechecks its identity before termination. Windows uses a bounded, read-only local CIM query because JDK 21 does not expose process arguments there. Restricted process metadata leaves the server unverified. Ambiguous or remote processes are never killed automatically.
 
 Profiles targeting the same instance share its managed process even when their profile IDs differ. Different configurations cannot start concurrently against the same server base directory. Path shortcuts honor `jboss.server.base.dir`, `jboss.server.config.dir`, and `jboss.server.log.dir` options. Deployment-scanner operations use the default `deployments` directory under that base; custom scanner paths in XML are not supported.
+
+Custom directory overrides containing spaces or shell metacharacters are rejected
+before launch because WildFly distribution scripts parse them incorrectly. The
+default standalone directories under a WildFly Home containing spaces are supported.
 
 ## WildFly profiles
 
@@ -203,11 +222,7 @@ for individual verifier targets, reports, and the current readiness status, and
 
 Current scope is local WildFly **standalone mode**. Domain mode and remote deployment-management APIs are intentionally out of scope.
 
-## License
-
-Apache-2.0
-
-### Remembered sources and upgrades
+## Remembered sources and upgrades
 
 The service toolbar's **Remembered Sources** action lists source associations shared
 across IntelliJ projects. Use **Edit / Relink** after moving a source tree or
@@ -222,7 +237,7 @@ snapshot. Removing all services no longer resurrects legacy entries on restart.
 Server edits are reflected in other open projects. Unloading the plugin detaches
 its process listeners without terminating shared WildFly instances.
 
-### Sensitive JVM properties
+## Sensitive JVM properties
 
 Properties with names ending in `password`, `passwd`, `pwd`, `secret`, `token`,
 `credential(s)`, `apiKey`, `accessKey`, `privateKey`, or `secretKey` are saved in the
@@ -241,8 +256,11 @@ process exits or the plugin unloads. A native Maven launch that fails before sup
 a process handler releases its pending file when the project closes. Sensitive JVM
 options use the standard local Maven runner; the experimental `maven.use.scripts`
 runner and remote execution targets are outside this feature's scope.
-Gradle builds using secrets run with `--no-daemon`. Java argument-file support
-requires Java 9 or newer; runtime fixtures use Java 21. Argument files use the system
+Gradle builds using secrets run with `--no-daemon`. WildFly also uses private Java
+argument files for quoted ordinary properties such as Oracle TNS paths. Their file
+references pass through `JDK_JAVA_OPTIONS` so distribution scripts do not reparse
+those values. Java argument-file support requires Java 9 or newer; runtime fixtures
+use Java 21. Argument files use the system
 launcher encoding (the Windows ANSI code page on a non-UTF-8 Windows installation).
 Unsupported characters produce an error before launch, without replacing characters
 in the credential. Use a UTF-8 system locale or the application's credential-file
@@ -263,7 +281,7 @@ remain responsible for their own output. Stop and relaunch through the plugin af
 unloading/reloading it before requesting a server restart that needs its private
 argument file.
 
-### Server log viewer
+## Server log viewer
 
 The **server.log** tab reads the selected profile's log in the background while the
 tab is visible. It follows rotation, truncation, and delayed file creation, with no
@@ -284,3 +302,9 @@ adds a separator while preserving the bounded recent history. Known values from
 the active managed server and sensitive `-D` assignments are redacted; this does
 not sanitize the underlying file or replace an application's logging policy.
 There is no per-service log feature.
+
+## License and project
+
+[Apache-2.0](LICENSE). Independent community project; not affiliated with or endorsed
+by Red Hat or JetBrains. See [security and sensitive data](SECURITY.md) before
+sharing logs or credentials.

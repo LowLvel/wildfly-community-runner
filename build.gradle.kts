@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "io.github.wildflycommunityrunner"
-version = "0.5.2"
+version = providers.gradleProperty("pluginVersion").get()
 
 repositories {
     mavenCentral()
@@ -22,6 +22,7 @@ dependencies {
         bundledPlugin("org.jetbrains.idea.maven")
         bundledPlugin("com.intellij.java")
         testFramework(TestFrameworkType.Platform)
+        zipSigner("0.1.43")
     }
     testImplementation("junit:junit:4.13.2")
 }
@@ -34,10 +35,22 @@ java {
 
 intellijPlatform {
     pluginConfiguration {
+        version = project.version.toString()
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
             untilBuild = providers.gradleProperty("pluginUntilBuild")
         }
+    }
+
+    signing {
+        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("PRIVATE_KEY")
+        password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+        certificateChainFile = providers.environmentVariable("CERTIFICATE_CHAIN_FILE").map { file(it) }
+        privateKeyFile = providers.environmentVariable("PRIVATE_KEY_FILE").map { file(it) }
+    }
+    publishing {
+        token = providers.environmentVariable("PUBLISH_TOKEN")
     }
 
     pluginVerification {
@@ -64,10 +77,20 @@ intellijPlatform {
 }
 
 tasks {
+    signPlugin {
+        providers.gradleProperty("releaseArchive").orNull?.let {
+            archiveFile.set(layout.projectDirectory.file(it))
+        }
+        signedArchiveFile.set(layout.buildDirectory.file("release/wildfly-community-runner-${project.version}-signed.zip"))
+    }
+    publishPlugin {
+        dependsOn(verifyPluginSignature)
+    }
     test {
         useJUnit()
         systemProperty("wildfly.test.gradleHome", requireNotNull(gradle.gradleHomeDir).absolutePath)
         environment("WILDFLY_SMOKE_PASSWORD", "wildfly-smoke-fixture-value")
+        systemProperty("wildfly.test.screenshots", layout.buildDirectory.dir("reports/screenshots").get().asFile.absolutePath)
         if (!providers.environmentVariable("WILDFLY_TEST_HOME").isPresent) {
             exclude("**/WildFlyRuntimeTest.class")
         }

@@ -45,7 +45,46 @@ selection and overrides, scanner status/timestamps/cleanup, legacy migration,
 global source registry copies, and IntelliJ service registration/write intent.
 Filesystem tests use temporary directories; platform tests boot an IntelliJ test
 application. CI fails if no regression tests execute and retains JUnit XML/HTML.
-These tests do not replace testing against a running WildFly server.
+Pure and platform fixtures are supplemented by the real-runtime checks below.
+
+## Runtime and release fixtures
+
+CI downloads the official WildFly 41.0.1.Final ZIP with SHA-256
+`783e6405a132a1f088b1a8f885040ef1e0ae3976a788a992147bc3e443dfe1b6`.
+Extraction validates archive paths. The installation path contains spaces; an
+isolated server base, loopback ports, sample WAR, and synthetic JVM property are
+created for each test. No personal installation or real credential is used.
+
+`WildFlyRuntimeTest` exercises native Local Server run state, reuse/disconnect,
+owned Stop, debug startup and JDI attach/disconnect, real HTTP responses, scanner
+deployment, final-artifact Auto Redeploy, ignored source edits, undeployment,
+timestamps, and server.log reading. The WAR checks delivery of a synthetic secret
+and an Oracle TNS property with spaces without printing either value.
+`NativeMavenRuntimeTest` executes the actual local Maven runner, checks a negative
+control, secret delivery, saved reference-only configuration, native rerun, and
+private-file/console cleanup. CI fails if either runtime test is absent or skipped.
+
+To run the server test locally:
+
+```sh
+python3 scripts/prepare_wildfly.py
+# Set WILDFLY_TEST_HOME to the path printed by the script, then:
+./gradlew test
+```
+
+Without `WILDFLY_TEST_HOME`, the real-server fixture is excluded; other tests still
+run. Use a fresh `build/runtime` directory when downloading again. The download
+script is test infrastructure and is never invoked by plugin onboarding.
+
+`MarketplaceScreenshotsTest` paints actual plugin components with sample data into
+1280×800 PNGs. Linux CI retains these as `marketplace-screenshots`; inspect them
+visually before using them in documentation or Marketplace Media. A disposable
+certificate exercises signing and signature verification without production keys.
+Release manifest tests reject an incorrect ID/version or ambiguous candidate set.
+
+These tests do not prove every IDE/WildFly/JDK combination or full interactive
+debugger navigation. Complete the final normal-IDE check in [RELEASING.md](RELEASING.md)
+before the initial Marketplace submission.
 
 ## Baseline evidence
 

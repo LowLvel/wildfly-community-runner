@@ -1,15 +1,39 @@
-<idea-plugin>
+<idea-plugin url="https://github.com/LowLvel/wildfly-community-runner">
     <id>io.github.wildflycommunityrunner</id>
     <name>WildFly Community Runner</name>
-    <vendor>Open Source Contributors</vendor>
-    <version>0.5.2</version>
+    <vendor url="https://github.com/LowLvel/wildfly-community-runner">Open Source Contributors</vendor>
 
     <description><![CDATA[
-        Local WildFly integration for IntelliJ IDEA Community: application-wide WildFly process detection/management,
-        Maven/Gradle multi-service workspaces, lexicographic hierarchical project discovery, external deployment tracking with remembered source paths,
-        artifact-watched Auto Redeploy, deterministic scanner cleanup for redeploy/undeploy, browser launch with configurable context paths and HTTP port, debug start/attach,
-        JVM-option shortcuts, and compact IntelliJ-style Services/Logs tooling.
+        <p>Run and debug local WildFly applications from your IDE.</p>
+        <p>WildFly Community Runner brings standalone server controls and multi-service deployment
+        to IntelliJ IDEA Community and compatible IntelliJ IDEA releases.</p>
+        <ul>
+            <li>Use native Run, Debug, and Attach configurations with configurable debug ports.</li>
+            <li>Discover nested Maven and Gradle services; build and deploy several selections in sequence.</li>
+            <li>Redeploy when a final WAR, EAR, or JAR changes. Source edits alone never trigger Auto Redeploy.</li>
+            <li>Share server profiles and remembered service sources across open projects.</li>
+            <li>Keep external deployments separate and inspect status, deployment time, and server.log.</li>
+            <li>Store sensitive JVM properties in the IDE password store or reference environment variables.</li>
+        </ul>
+        <p>Requires a local WildFly installation in standalone mode. No server download or automatic
+        build occurs on first use. Domain mode and remote deployment management are not supported.</p>
+        <p><a href="https://github.com/LowLvel/wildfly-community-runner#first-use">Getting started</a> ·
+        <a href="https://github.com/LowLvel/wildfly-community-runner/blob/main/docs/TROUBLESHOOTING.md">Troubleshooting</a> ·
+        <a href="https://github.com/LowLvel/wildfly-community-runner/issues">Report an issue</a></p>
+        <p>Independent community project. Not affiliated with or endorsed by Red Hat or JetBrains.</p>
     ]]></description>
+
+    <change-notes><![CDATA[
+        <p><b>0.6.0</b></p>
+        <ul>
+            <li>Native server Run/Debug and Attach configurations, with shared process ownership.</li>
+            <li>Background onboarding, improved process detection, cancellable build batches, and hardened artifact watches.</li>
+            <li>Versioned settings migration, remembered-source cleanup, and secure JVM-property references.</li>
+            <li>Bounded live server.log viewer with rotation recovery, pause, filtering, and editor access.</li>
+            <li>Automated regression tests, real-runtime smoke tests, and compatibility checks across six IDE builds.</li>
+        </ul>
+        <p><a href="https://github.com/LowLvel/wildfly-community-runner/blob/main/CHANGELOG.md">Full changelog</a></p>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.java</depends>
@@ -22,6 +46,7 @@
         <configurationType implementation="io.github.wildflycommunityrunner.run.WildFlyConfigurationType"/>
         <toolWindow id="WildFly"
                     anchor="right"
+                    icon="/icons/wildfly.svg"
                     factoryClass="io.github.wildflycommunityrunner.ui.WildFlyToolWindowFactory"/>
     </extensions>
 </idea-plugin>
