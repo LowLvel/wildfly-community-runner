@@ -9,6 +9,8 @@ import io.github.wildflycommunityrunner.model.ServerProfile;
 import io.github.wildflycommunityrunner.util.WildFlyPaths;
 import io.github.wildflycommunityrunner.util.IdeUi;
 import io.github.wildflycommunityrunner.services.PluginNotifications;
+import io.github.wildflycommunityrunner.security.JvmSecrets;
+import io.github.wildflycommunityrunner.security.SensitiveProperties;
 import org.jetbrains.annotations.Nullable;
 
 import javax.swing.*;
@@ -31,6 +33,7 @@ public final class ServerProfileDialog extends DialogWrapper {
     private final ServerProfile profile;
     private final Project project;
     private boolean validating;
+    private final PendingSecrets pendingSecrets = new PendingSecrets();
     private int configurationGeneration;
 
     public ServerProfileDialog(Project project, @Nullable ServerProfile existing) {
@@ -49,6 +52,7 @@ public final class ServerProfileDialog extends DialogWrapper {
         startupArgumentsField.setText(profile.startupArguments == null ? "" : profile.startupArguments);
         jvmOptionsField.setText(profile.jvmOptions == null ? "" : profile.jvmOptions);
         init();
+        com.intellij.openapi.util.Disposer.register(getDisposable(), pendingSecrets);
         reloadConfigurations(profile.configuration);
     }
 
@@ -77,7 +81,7 @@ public final class ServerProfileDialog extends DialogWrapper {
         addRow(panel, c, "Quick JVM option", new JvmOptionShortcutPanel(jvmOptionsField), null);
         addRow(panel, c, "WildFly JVM options", jvmOptionsField, null);
 
-        JLabel hint = new JLabel("JVM options are added to JAVA_OPTS. Example: -Xmx2g -Dfoo=bar");
+        JLabel hint = new JLabel("Sensitive -D properties use IDE Passwords. Custom keys can use -Dkey=${env:VARIABLE}.");
         c.gridx = 1;
         c.gridy++;
         c.gridwidth = 2;
@@ -171,6 +175,8 @@ public final class ServerProfileDialog extends DialogWrapper {
     @Override
     protected @Nullable ValidationInfo doValidate() {
         readFieldsIntoProfile();
+        try { SensitiveProperties.requireJvmField(profile.startupArguments, "WildFly startup arguments"); }
+        catch (IllegalArgumentException error) { return new ValidationInfo(error.getMessage(), startupArgumentsField); }
         if (profile.httpPort < 1 || profile.httpPort > 65535) return new ValidationInfo("HTTP port must be between 1 and 65535.");
         if (profile.debugPort < 1 || profile.debugPort > 65535) return new ValidationInfo("Debug port must be between 1 and 65535.");
         if (profile.name.isBlank()) return new ValidationInfo("Server name is required.", nameField);
@@ -189,17 +195,34 @@ public final class ServerProfileDialog extends DialogWrapper {
         validating = true;
         setOKActionEnabled(false);
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
-            String failure;
-            try { failure = WildFlyPaths.validate(snapshot); }
-            catch (RuntimeException error) { failure = PluginNotifications.message(error); }
-            String error = failure;
-            IdeUi.later(project, modality, this::isDisposed, () -> {
-                validating = false;
-                setOKActionEnabled(true);
-                if (!fields.equals(validationFields())) { setErrorText("Settings changed during validation. Press OK again."); return; }
-                if (error != null) { setErrorText(error); return; }
-                super.doOKAction();
-            });
+            JvmSecrets.Protection protection = null;
+            try {
+                String failure = WildFlyPaths.validate(snapshot);
+                if (failure != null) throw new IllegalArgumentException(failure);
+                protection = JvmSecrets.getInstance().protection();
+                String protectedOptions = protection.protect(snapshot.jvmOptions);
+                if (!pendingSecrets.offer(protection)) return;
+                IdeUi.later(project, modality, this::isDisposed, () -> {
+                    validating = false;
+                    setOKActionEnabled(true);
+                    if (!fields.equals(validationFields())) {
+                        pendingSecrets.finish(false);
+                        setErrorText("Settings changed during validation. Press OK again.");
+                        return;
+                    }
+                    jvmOptionsField.setText(protectedOptions);
+                    // doValidate/getProfile read the tokenized field, so plaintext cannot be restored afterward.
+                    readFieldsIntoProfile();
+                    pendingSecrets.finish(true);
+                    super.doOKAction();
+                });
+            } catch (Exception failure) {
+                if (protection != null) protection.close();
+                String message = PluginNotifications.message(failure);
+                IdeUi.later(project, modality, this::isDisposed, () -> {
+                    validating = false; setOKActionEnabled(true); setErrorText(message);
+                });
+            }
         });
     }
 

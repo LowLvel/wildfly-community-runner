@@ -11,6 +11,10 @@ import com.intellij.openapi.components.Service;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Key;
 import io.github.wildflycommunityrunner.model.ServerProfile;
+import io.github.wildflycommunityrunner.security.JvmSecrets;
+import io.github.wildflycommunityrunner.security.PrivateJvmOptions;
+import io.github.wildflycommunityrunner.security.SecretRedactor;
+import io.github.wildflycommunityrunner.security.SensitiveProperties;
 import io.github.wildflycommunityrunner.util.WildFlyPaths;
 import org.jetbrains.annotations.NotNull;
 
@@ -34,6 +38,10 @@ public final class WildFlyProcessService implements com.intellij.openapi.Disposa
     private final Object listenerLock = new Object();
     private final Map<ProcessHandler, List<ProcessListener>> listeners = new java.util.IdentityHashMap<>();
     private volatile boolean disposed;
+    private record PrivateOptions(JvmSecrets owner, PrivateJvmOptions options) {
+        void release() { owner.release(options); }
+    }
+    private final Map<ProcessHandler, PrivateOptions> privateOptions = new java.util.IdentityHashMap<>();
 
     public static WildFlyProcessService getInstance() {
         return ApplicationManager.getApplication().getService(WildFlyProcessService.class);
@@ -206,6 +214,7 @@ public final class WildFlyProcessService implements com.intellij.openapi.Disposa
         String validationError = WildFlyPaths.validate(profile);
         if (validationError != null) throw new IllegalArgumentException(validationError);
 
+        SensitiveProperties.requireJvmField(profile.startupArguments, "WildFly startup arguments");
         Path script = WildFlyPaths.startupScript(profile);
         boolean windows = System.getProperty("os.name", "").toLowerCase().contains("win");
         List<String> startupArguments = WildFlyPaths.startupArguments(profile);
@@ -233,28 +242,40 @@ public final class WildFlyProcessService implements com.intellij.openapi.Disposa
         if (profile.javaHome != null && !profile.javaHome.isBlank()) {
             commandLine.withEnvironment("JAVA_HOME", profile.javaHome.trim());
         }
-        if (profile.jvmOptions != null && !profile.jvmOptions.isBlank()) {
-            String inherited = System.getenv("JAVA_OPTS");
-            String combined = ((inherited == null ? "" : inherited.trim()) + " " + profile.jvmOptions.trim()).trim();
-            commandLine.withEnvironment("JAVA_OPTS", combined);
+        String inherited = System.getenv("JAVA_OPTS");
+        String combined = ((inherited == null ? "" : inherited.trim()) + " "
+                + (profile.jvmOptions == null ? "" : profile.jvmOptions.trim())).trim();
+        JvmSecrets secretManager = JvmSecrets.getInstance();
+        PrivateJvmOptions options = secretManager.prepare(combined);
+        KillableProcessHandler handler;
+        try {
+            if (!options.options().isBlank()) commandLine.withEnvironment("JAVA_OPTS", options.options());
+            output.accept("Starting " + profile.name + (debug ? " in DEBUG mode on port " + profile.debugPort : "")
+                    + " using " + profile.configuration);
+            if (disposed) throw new IllegalStateException("WildFly integration has been disposed.");
+            handler = new KillableProcessHandler(commandLine);
+            handler.setShouldKillProcessSoftly(false);
+            handler.putUserData(SecretRedactor.PROCESS, options.redactor());
+            synchronized (listenerLock) {
+                if (!disposed) privateOptions.put(handler, new PrivateOptions(secretManager, options));
+                else { handler.putUserData(SecretRedactor.PROCESS, null); secretManager.release(options); }
+            }
+            registerManaged(profile, handler, debug);
+        } catch (Exception failure) {
+            secretManager.release(options);
+            throw failure;
         }
-
-        output.accept("Starting " + profile.name + (debug ? " in DEBUG mode on port " + profile.debugPort : "")
-                + " using " + profile.configuration);
-        KillableProcessHandler handler = new KillableProcessHandler(commandLine);
-        handler.setShouldKillProcessSoftly(false);
-        registerManaged(profile, handler, debug);
+        Map<Key<?>, SecretRedactor.Lines> streams = new ConcurrentHashMap<>();
         addListener(handler, new ProcessListener() {
             @Override
             @SuppressWarnings("rawtypes")
             public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                String text = event.getText().stripTrailing();
-                if (text.isBlank()) return;
-                output.accept(ProcessOutputType.isStderr(outputType) ? "[stderr] " + text : text);
+                streams.computeIfAbsent(outputType, key -> options.redactor().new Lines(text -> {
+                    if (!text.isBlank()) output.accept(ProcessOutputType.isStderr(key) ? "[stderr] " + text.stripTrailing() : text.stripTrailing());
+                })).accept(event.getText());
             }
-
-            @Override
-            public void processTerminated(@NotNull ProcessEvent event) {
+            @Override public void processTerminated(@NotNull ProcessEvent event) {
+                streams.values().forEach(SecretRedactor.Lines::finish);
                 output.accept(profile.name + " terminated with exit code " + event.getExitCode());
             }
         });
@@ -293,6 +314,9 @@ public final class WildFlyProcessService implements com.intellij.openapi.Disposa
         synchronized (listenerLock) {
             List<ProcessListener> removed = listeners.remove(handler);
             if (removed != null) removed.forEach(handler::removeProcessListener);
+            handler.putUserData(SecretRedactor.PROCESS, null);
+            PrivateOptions options = privateOptions.remove(handler);
+            if (options != null) options.release();
         }
     }
 
@@ -303,6 +327,11 @@ public final class WildFlyProcessService implements com.intellij.openapi.Disposa
             detach = new ArrayList<>(listeners.keySet());
             listeners.forEach((handler, owned) -> owned.forEach(handler::removeProcessListener));
             listeners.clear();
+            privateOptions.forEach((handler, options) -> {
+                handler.putUserData(SecretRedactor.PROCESS, null);
+                options.release();
+            });
+            privateOptions.clear();
             processes.clear();
         }
         // Unloading the plugin must release its listeners without terminating shared WildFly servers.

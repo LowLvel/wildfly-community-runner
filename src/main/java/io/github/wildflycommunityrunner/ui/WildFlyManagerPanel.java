@@ -1378,6 +1378,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private void append(String message) {
+        message = io.github.wildflycommunityrunner.security.SensitiveProperties.redactProperties(message);
         if (disposed || project.isDisposed() || message == null || message.isBlank()) return;
         synchronized (pendingOutput) {
             pendingOutput.append("[").append(LocalTime.now().format(TIME)).append("] ")

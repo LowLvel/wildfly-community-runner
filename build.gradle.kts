@@ -66,6 +66,7 @@ intellijPlatform {
 tasks {
     test {
         useJUnit()
+        systemProperty("wildfly.test.gradleHome", requireNotNull(gradle.gradleHomeDir).absolutePath)
         testLogging {
             events("passed", "skipped", "failed")
             exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL

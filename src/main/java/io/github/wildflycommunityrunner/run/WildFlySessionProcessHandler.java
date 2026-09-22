@@ -10,6 +10,8 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import java.io.OutputStream;
 import java.util.concurrent.Executor;
+import io.github.wildflycommunityrunner.security.SecretRedactor;
+import io.github.wildflycommunityrunner.security.SensitiveProperties;
 
 /** A session owns only the process it started; observing another project's server never grants stop ownership. */
 final class WildFlySessionProcessHandler extends ProcessHandler {
@@ -21,9 +23,12 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
     private final Executor executor;
     private Request request = Request.NONE;
     private Launch launch;
+    private SecretRedactor redactor = new SecretRedactor(java.util.List.of());
+    private final java.util.Map<Key<?>, SecretRedactor.Lines> streams = new java.util.concurrent.ConcurrentHashMap<>();
     private final ProcessListener listener = new ProcessListener() {
         @Override public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-            if (!isProcessTerminated()) notifyTextAvailable(event.getText(), outputType);
+            if (!isProcessTerminated()) streams.computeIfAbsent(outputType,
+                    key -> redactor.new Lines(text -> notifyTextAvailable(text, key))).accept(event.getText());
         }
         @Override public void processTerminated(@NotNull ProcessEvent event) { finish(event.getExitCode()); }
     };
@@ -42,6 +47,8 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
                 Request pending;
                 synchronized (this) {
                     launch = result;
+                    SecretRedactor processRedactor = result.handler().getUserData(SecretRedactor.PROCESS);
+                    if (processRedactor != null) redactor = processRedactor;
                     pending = request;
                     if (pending == Request.NONE) result.handler().addProcessListener(listener);
                 }
@@ -59,7 +66,7 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
                 finish(130);
             } catch (Exception e) {
                 if (!isProcessTerminated()) {
-                    notifyTextAvailable("Cannot start WildFly: " + e.getMessage() + "\n", ProcessOutputTypes.STDERR);
+                    notifyTextAvailable("Cannot start WildFly: " + SensitiveProperties.redactProperties(e.getMessage()) + "\n", ProcessOutputTypes.STDERR);
                     finish(1);
                 }
             }
@@ -68,6 +75,9 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
 
     private synchronized void finish(int code) {
         if (launch != null) launch.handler().removeProcessListener(listener);
+        streams.values().forEach(SecretRedactor.Lines::finish);
+        streams.clear();
+        redactor = new SecretRedactor(java.util.List.of());
         notifyProcessTerminated(code);
     }
 
@@ -82,6 +92,9 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
             // Keep the session terminating until the process actually exits, so Rerun cannot race Stop.
             executor.execute(current.handler()::destroyProcess);
         } else if (current != null) {
+            streams.values().forEach(SecretRedactor.Lines::finish);
+            streams.clear();
+            redactor = new SecretRedactor(java.util.List.of());
             notifyProcessDetached();
         } else {
             notifyProcessTerminated(130);
@@ -90,6 +103,9 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
 
     @Override protected synchronized void detachProcessImpl() {
         request = Request.DETACH;
+        streams.values().forEach(SecretRedactor.Lines::finish);
+        streams.clear();
+        redactor = new SecretRedactor(java.util.List.of());
         if (launch != null) launch.handler().removeProcessListener(listener);
         notifyProcessDetached();
     }

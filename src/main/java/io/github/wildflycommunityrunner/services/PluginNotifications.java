@@ -41,12 +41,12 @@ public final class PluginNotifications {
     }
 
     public static String message(Throwable error) {
-        String message = error.getMessage();
+        String message = io.github.wildflycommunityrunner.security.SensitiveProperties.redactProperties(error.getMessage());
         return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
     }
 
     private static String escape(String value) {
-        String text = value == null ? "Unknown error" : value;
+        String text = value == null ? "Unknown error" : io.github.wildflycommunityrunner.security.SensitiveProperties.redactProperties(value);
         if (text.length() > 2000) text = text.substring(0, 2000) + "…";
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 .replace("\"", "&quot;").replace("'", "&#39;").replace("\n", "<br>");

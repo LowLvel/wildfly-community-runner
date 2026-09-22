@@ -220,3 +220,35 @@ explicit Maven/Gradle configuration and empty arguments, and save a versioned
 snapshot. Removing all services no longer resurrects legacy entries on restart.
 Server edits are reflected in other open projects. Unloading the plugin detaches
 its process listeners without terminating shared WildFly instances.
+
+### Sensitive JVM properties
+
+Properties with names ending in `password`, `passwd`, `pwd`, `secret`, `token`,
+`credential(s)`, `apiKey`, `accessKey`, `privateKey`, or `secretKey` are saved in the
+[IntelliJ Passwords store](https://plugins.jetbrains.com/docs/intellij/persisting-sensitive-data.html).
+The JVM options field then shows `${secret:…}` references. For a sensitive property
+with another name, use `-Dproperty=${env:VARIABLE}`; the variable must be present in
+the IDE's environment. Oracle TNS and keyStore/trustStore path helpers remain ordinary
+options. Use double quotes for values containing spaces.
+
+WildFly and build JVM options resolve on background threads into temporary Java
+argument files restricted to the filesystem owner. Secret values stay out of the
+plugin's saved profiles, generated Maven run configuration VM options, and launch
+command arguments. Files are released after the process exits or the plugin unloads.
+Gradle builds using secrets run with `--no-daemon`. Java argument-file support
+requires Java 9 or newer; runtime fixtures use Java 21. Ordinary options are unchanged.
+
+Keep sensitive properties in **JVM options**. Sensitive values in build arguments,
+build tasks/goals, or WildFly startup arguments are rejected with an explanation;
+the plugin does not silently reinterpret Maven user properties as JVM properties.
+Use the build tool's credential files when that distinction matters.
+
+Older plugin settings migrate in the background. If PasswordSafe is locked or
+unavailable, the plugin retains the previous values and reports how to fix storage.
+An IDE configured not to retain passwords may require re-entering values after a
+restart. References are local to that IDE's password store and are not portable
+credentials. Plugin activity and the native WildFly console redact known values
+and sensitive `-D` assignments; applications and third-party Maven/build logging
+remain responsible for their own output. Stop and relaunch through the plugin after
+unloading/reloading it before requesting a server restart that needs its private
+argument file.

@@ -9,6 +9,10 @@ import io.github.wildflycommunityrunner.util.IdeUi;
 import io.github.wildflycommunityrunner.util.ProjectTrust;
 import com.intellij.util.execution.ParametersListUtil;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
+import io.github.wildflycommunityrunner.security.JvmSecrets;
+import io.github.wildflycommunityrunner.security.PrivateJvmOptions;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import org.jetbrains.idea.maven.execution.MavenRunConfigurationType;
 import org.jetbrains.idea.maven.execution.MavenRunner;
 import org.jetbrains.idea.maven.execution.MavenRunnerParameters;
@@ -40,30 +44,51 @@ public final class MavenBuildService {
                 MavenRunnerSettings settings = MavenRunner.getInstance(project).getSettings().clone();
                 String inherited = settings.getVmOptions() == null ? "" : settings.getVmOptions().trim();
                 String options = service.buildJvmOptions == null ? "" : service.buildJvmOptions.trim();
-                settings.setVmOptions((inherited + " " + options).trim());
-                var configuration = MavenRunConfigurationType.createRunnerAndConfigurationSettings(
-                        null, settings, parameters, project, "WildFly build: " + service.name, false);
-                var callback = new ProgramRunner.Callback() {
-                    @Override public void processStarted(com.intellij.execution.ui.RunContentDescriptor descriptor) {
-                        ProcessHandler handler = descriptor.getProcessHandler();
-                        if (handler == null) operation.failed(new IllegalStateException("Maven process did not start"));
-                        else operation.bind(handler);
-                    }
-                    @Override public void processNotStarted(Throwable error) {
-                        operation.failed(error == null ? new IllegalStateException("Maven launch did not start") : error);
-                    }
-                };
-                var environment = com.intellij.execution.runners.ExecutionEnvironmentBuilder.create(
-                        com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance(), configuration).build(callback);
-                new BuildExecutionListener(project, environment, operation);
-                if (!operation.beginLaunch()) return;
-                output.accept("Building " + service.name + " — Maven " + String.join(" ", goals));
-                environment.getRunner().execute(environment);
+                ModalityState modality = ModalityState.defaultModalityState();
+                ApplicationManager.getApplication().executeOnPooledThread(() -> {
+                    try {
+                        JvmSecrets secrets = JvmSecrets.getInstance();
+                        PrivateJvmOptions prepared = secrets.prepare((inherited + " " + options).trim());
+                        operation.onFinished(() -> secrets.release(prepared));
+                        settings.setVmOptions(prepared.options());
+                        IdeUi.later(project, modality, () -> operation.completion().isDone(),
+                                () -> launch(project, service, operation, output, parameters, settings, goals));
+                    } catch (ProcessCanceledException cancelled) {
+                        operation.failed(cancelled); throw cancelled;
+                    } catch (Exception failure) { operation.failed(failure); }
+                });
             } catch (ProcessCanceledException cancelled) {
                 operation.failed(cancelled);
                 throw cancelled;
             } catch (Exception error) { operation.failed(error); }
         });
+    }
+
+    private static void launch(Project project, ServiceProfile service, BuildOperation operation, Consumer<String> output,
+                               MavenRunnerParameters parameters, MavenRunnerSettings settings, List<String> goals) {
+        try {
+            if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
+            var configuration = MavenRunConfigurationType.createRunnerAndConfigurationSettings(
+                    null, settings, parameters, project, "WildFly build: " + service.name, false);
+            var callback = new ProgramRunner.Callback() {
+                @Override public void processStarted(com.intellij.execution.ui.RunContentDescriptor descriptor) {
+                    ProcessHandler handler = descriptor.getProcessHandler();
+                    if (handler == null) operation.failed(new IllegalStateException("Maven process did not start"));
+                    else operation.bind(handler);
+                }
+                @Override public void processNotStarted(Throwable error) {
+                    operation.failed(error == null ? new IllegalStateException("Maven launch did not start") : error);
+                }
+            };
+            var environment = com.intellij.execution.runners.ExecutionEnvironmentBuilder.create(
+                    com.intellij.execution.executors.DefaultRunExecutor.getRunExecutorInstance(), configuration).build(callback);
+            new BuildExecutionListener(project, environment, operation);
+            if (!operation.beginLaunch()) return;
+            output.accept("Building " + service.name + " — Maven " + String.join(" ", goals));
+            environment.getRunner().execute(environment);
+        } catch (ProcessCanceledException cancelled) {
+            operation.failed(cancelled); throw cancelled;
+        } catch (Exception failure) { operation.failed(failure); }
     }
 
     public static Path resolvePom(Project project, ServiceProfile service) {

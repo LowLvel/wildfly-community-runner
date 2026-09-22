@@ -40,6 +40,7 @@ public final class ProjectSetupService implements Disposable {
         IdeUi.later(project, () -> disposed, () -> {
             if (started) return;
             started = true;
+            io.github.wildflycommunityrunner.security.SensitiveSettingsMigration.schedule(project);
             // The modern trust listener is public but marked experimental in the 2025.1 baseline.
             ApplicationManager.getApplication().getMessageBus().connect(this).subscribe(TrustedProjectsListener.TOPIC,
                     new TrustedProjectsListener() {

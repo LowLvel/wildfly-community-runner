@@ -1,6 +1,12 @@
 package io.github.wildflycommunityrunner.ui;
 
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
+import io.github.wildflycommunityrunner.security.JvmSecrets;
+import io.github.wildflycommunityrunner.security.SensitiveProperties;
+import io.github.wildflycommunityrunner.services.PluginNotifications;
+import io.github.wildflycommunityrunner.util.IdeUi;
 import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.ValidationInfo;
 import io.github.wildflycommunityrunner.model.BuildSystem;
@@ -21,6 +27,9 @@ import java.util.Objects;
 /** Compact modal editor for a single deployable service. */
 public final class ServiceProfileDialog extends DialogWrapper {
     private final ServiceProfile working;
+    private final Project project;
+    private final PendingSecrets pendingSecrets = new PendingSecrets();
+    private boolean saving;
     private final List<BuildProjectChoice> choices;
 
     private final JTextField nameField = new JTextField(34);
@@ -42,12 +51,14 @@ public final class ServiceProfileDialog extends DialogWrapper {
 
     public ServiceProfileDialog(Project project, ServiceProfile service, List<BuildProjectChoice> choices) {
         super(project, true);
+        this.project = project;
         this.working = new ServiceProfile(service);
         this.working.migrateLegacyFields();
         this.choices = choices == null ? List.of() : choices;
         setTitle("Service — " + (working.name == null || working.name.isBlank() ? "Unnamed" : working.name));
         loadFields();
         init();
+        com.intellij.openapi.util.Disposer.register(getDisposable(), pendingSecrets);
     }
 
     public ServiceProfile getProfile() {
@@ -111,7 +122,7 @@ public final class ServiceProfileDialog extends DialogWrapper {
         addRow(panel, c, "Quick JVM option", new JvmOptionShortcutPanel(jvmOptions), null);
         addRow(panel, c, "Build JVM options", jvmOptions, null);
         c.gridx = 1; c.weightx = 1; c.gridwidth = 2;
-        panel.add(new JLabel("Examples: Maven clean package; Gradle clean build. Oracle TNS can be added with the picker above."), c);
+        panel.add(new JLabel("Sensitive -D properties use IDE Passwords. For custom keys: -Dkey=${env:VARIABLE}."), c);
         return panel;
     }
 
@@ -252,6 +263,10 @@ public final class ServiceProfileDialog extends DialogWrapper {
     @Override
     protected @Nullable ValidationInfo doValidate() {
         readFieldsIntoProfile();
+        try {
+            SensitiveProperties.requireJvmField(working.buildTasks, "build tasks/goals");
+            SensitiveProperties.requireJvmField(working.buildArguments, "build arguments");
+        } catch (IllegalArgumentException error) { return new ValidationInfo(error.getMessage()); }
         if (working.name == null || working.name.isBlank()) return new ValidationInfo("Service name is required.");
         if (!working.deploymentName.isBlank()) {
             try { DeploymentScannerService.safeDeploymentName(working.deploymentName); }
@@ -262,6 +277,42 @@ public final class ServiceProfileDialog extends DialogWrapper {
         if (working.buildSystemEnum() == BuildSystem.MAVEN && !lower.endsWith("pom.xml")) return new ValidationInfo("Maven services must point to pom.xml.");
         if (working.buildSystemEnum() == BuildSystem.GRADLE && !(lower.endsWith("build.gradle") || lower.endsWith("build.gradle.kts"))) return new ValidationInfo("Gradle services must point to build.gradle or build.gradle.kts.");
         return null;
+    }
+
+    @Override protected void doOKAction() {
+        if (saving) return;
+        ValidationInfo validation = doValidate();
+        if (validation != null) { setErrorText(validation.message); return; }
+        String original = jvmOptions.getText();
+        ModalityState modality = ModalityState.defaultModalityState();
+        saving = true; setOKActionEnabled(false);
+        ApplicationManager.getApplication().executeOnPooledThread(() -> {
+            JvmSecrets.Protection protection = null;
+            try {
+                protection = JvmSecrets.getInstance().protection();
+                String protectedOptions = protection.protect(original);
+                if (!pendingSecrets.offer(protection)) return;
+                IdeUi.later(project, modality, this::isDisposed, () -> {
+                    saving = false; setOKActionEnabled(true);
+                    ValidationInfo changed = doValidate();
+                    if (!original.equals(jvmOptions.getText()) || changed != null) {
+                        pendingSecrets.finish(false);
+                        setErrorText(changed == null ? "JVM options changed while saving. Press OK again." : changed.message);
+                        return;
+                    }
+                    jvmOptions.setText(protectedOptions);
+                    readFieldsIntoProfile();
+                    pendingSecrets.finish(true);
+                    super.doOKAction();
+                });
+            } catch (Exception failure) {
+                if (protection != null) protection.close();
+                String message = PluginNotifications.message(failure);
+                IdeUi.later(project, modality, this::isDisposed, () -> {
+                    saving = false; setOKActionEnabled(true); setErrorText(message);
+                });
+            }
+        });
     }
 
     private static boolean samePath(String a, String b) {

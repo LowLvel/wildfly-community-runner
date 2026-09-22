@@ -50,12 +50,18 @@ public final class WildFlyApplicationSettings implements PersistentStateComponen
 
     /** The callback edits an isolated copy; no caller or serializer retains mutable live state. */
     public void update(Consumer<StateData> edit) {
+        update(edit, true);
+    }
+
+    public void updateSources(Consumer<StateData> edit) { update(edit, false); }
+
+    private void update(Consumer<StateData> edit, boolean servers) {
         synchronized (this) {
             StateData draft = copy(state);
             edit.accept(draft);
             state = copy(draft);
         }
-        publish(true, false);
+        publish(servers, !servers);
     }
 
     public synchronized List<ServerProfile> servers() { return copy(state).servers; }

@@ -99,3 +99,21 @@ explicit forget/relink operations; unavailable paths remain recoverable.
 `WildFlyProcessService.dispose` removes plugin listeners and detaches platform
 process handlers, including launches completing during disposal, without killing
 application-wide servers.
+
+### Sensitive options
+
+`JvmSecrets` accesses public `PasswordSafe` APIs only on background threads. A
+`Protection` transaction creates fresh credential IDs and removes uncommitted
+entries; existing shared references are never deleted by profile removal.
+`SensitiveSettingsMigration` saves first and compares the original fields before
+replacing them, so concurrent user edits win. `PendingSecrets` rolls back a dialog
+save if it is cancelled or changed before its application-queue callback runs.
+
+`PrivateJvmOptions` secures its directory and file before writing JVM properties,
+preserves nonsensitive options, and escapes Java argument-file syntax. The platform
+Maven runner receives only the public option string; Gradle gets the same string
+through `org.gradle.jvmargs` with a single-use daemon. WildFly keeps nonsensitive
+server identity properties visible to its launcher and the process detector.
+Process cleanup holds the already-created credential service instead of looking
+up services during container disposal. `SecretRedactor.Lines` buffers bounded
+stdout/stderr lines so a secret split across process output chunks is not exposed.

@@ -19,6 +19,8 @@ public final class BuildService {
             try {
                 if (project.isDisposed()) { operation.cancel(); return; }
                 snapshot.migrateLegacyFields();
+                io.github.wildflycommunityrunner.security.SensitiveProperties.requireJvmField(snapshot.buildTasks, "build tasks/goals");
+                io.github.wildflycommunityrunner.security.SensitiveProperties.requireJvmField(snapshot.buildArguments, "build arguments");
                 if (snapshot.buildSystemEnum() == BuildSystem.GRADLE) GradleBuildService.build(project, snapshot, operation, output);
                 else MavenBuildService.build(project, snapshot, operation, output);
             } catch (com.intellij.openapi.progress.ProcessCanceledException cancelled) {

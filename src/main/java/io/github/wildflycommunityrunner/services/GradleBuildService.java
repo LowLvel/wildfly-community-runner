@@ -14,6 +14,8 @@ import io.github.wildflycommunityrunner.util.ProjectTrust;
 import com.intellij.openapi.util.Key;
 import com.intellij.util.execution.ParametersListUtil;
 import io.github.wildflycommunityrunner.model.ServiceProfile;
+import io.github.wildflycommunityrunner.security.JvmSecrets;
+import io.github.wildflycommunityrunner.security.SecretRedactor;
 import org.jetbrains.annotations.NotNull;
 
 import java.nio.charset.StandardCharsets;
@@ -63,9 +65,11 @@ public final class GradleBuildService {
             if (service.buildArguments != null && !service.buildArguments.isBlank()) {
                 command.addAll(ParametersListUtil.parse(service.buildArguments));
             }
-            if (service.buildJvmOptions != null && !service.buildJvmOptions.isBlank()) {
-                command.add("-Dorg.gradle.jvmargs=" + service.buildJvmOptions.trim());
-            }
+            var secrets = JvmSecrets.getInstance();
+            var options = secrets.prepare(service.buildJvmOptions);
+            operation.onFinished(() -> secrets.release(options));
+            if (!options.options().isBlank()) command.add("-Dorg.gradle.jvmargs=" + options.options());
+            if (options.containsSecrets()) command.add("--no-daemon");
 
             int taskStart = windows ? 3 : 1;
             output.accept("Building " + service.name + " — Gradle " + String.join(" ", command.subList(taskStart, command.size())));
@@ -78,18 +82,22 @@ public final class GradleBuildService {
             KillableProcessHandler handler = new KillableProcessHandler(commandLine);
             handler.setShouldKillProcessSoftly(false);
             operation.bind(handler);
+            java.util.Map<Key<?>, SecretRedactor.Lines> streams = new java.util.concurrent.ConcurrentHashMap<>();
             ProcessListener outputListener = new ProcessListener() {
                 @Override
                 @SuppressWarnings("rawtypes")
                 public void onTextAvailable(@NotNull ProcessEvent event, @NotNull Key outputType) {
-                    String text = event.getText().stripTrailing();
-                    if (text.isBlank()) return;
-                    output.accept(ProcessOutputType.isStderr(outputType) ? "[gradle stderr] " + text : text);
+                    streams.computeIfAbsent(outputType, key -> options.redactor().new Lines(text -> {
+                        if (!text.isBlank()) output.accept(ProcessOutputType.isStderr(key) ? "[gradle stderr] " + text.stripTrailing() : text.stripTrailing());
+                    })).accept(event.getText());
                 }
 
             };
             handler.addProcessListener(outputListener);
-            operation.onFinished(() -> handler.removeProcessListener(outputListener));
+            operation.onFinished(() -> {
+                streams.values().forEach(SecretRedactor.Lines::finish);
+                handler.removeProcessListener(outputListener);
+            });
             handler.startNotify();
         } catch (ProcessCanceledException cancelled) {
             operation.failed(cancelled);
