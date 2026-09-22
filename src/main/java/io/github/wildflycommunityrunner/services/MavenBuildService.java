@@ -14,6 +14,11 @@ import io.github.wildflycommunityrunner.security.SensitiveProperties;
 import com.intellij.openapi.util.registry.Registry;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.application.WriteAction;
+import com.intellij.openapi.projectRoots.JavaSdk;
+import com.intellij.openapi.projectRoots.ProjectJdkTable;
+import com.intellij.openapi.projectRoots.Sdk;
 import org.jetbrains.idea.maven.execution.MavenRunConfigurationType;
 import org.jetbrains.idea.maven.execution.MavenRunner;
 import org.jetbrains.idea.maven.execution.MavenRunnerParameters;
@@ -38,12 +43,20 @@ public final class MavenBuildService {
         parameters.setPomFileName(pom.getFileName().toString());
         parameters.setGoals(goals);
         parameters.setResolveToWorkspace(true);
+        // Maven identifies JDKs by SDK name, not JAVA_HOME. Prepare roots on this worker.
+        Sdk buildJdk = service.buildJavaHome == null || service.buildJavaHome.isBlank() ? null
+                : ReadAction.compute(() -> {
+                    String home = Path.of(service.buildJavaHome.trim()).toAbsolutePath().normalize().toString();
+                    for (Sdk sdk : ProjectJdkTable.getInstance().getAllJdks())
+                        if (sameJavaHome(sdk, home)) return sdk;
+                    return JavaSdk.getInstance().createJdk("WildFly build (" + home + ")", home, false);
+                });
         IdeUi.later(project, () -> operation.completion().isDone(), () -> {
             try {
                 if (!ProjectTrust.isTrusted(project)) throw new IllegalStateException("Trust this project before running a build.");
                 FileDocumentManager.getInstance().saveAllDocuments();
                 MavenRunnerSettings settings = MavenRunner.getInstance(project).getSettings().clone();
-                if (service.buildJavaHome != null && !service.buildJavaHome.isBlank()) settings.setJreName(service.buildJavaHome.trim());
+                if (buildJdk != null) settings.setJreName(registerBuildJdk(buildJdk));
                 String inherited = settings.getVmOptions() == null ? "" : settings.getVmOptions().trim();
                 String options = service.buildJvmOptions == null ? "" : service.buildJvmOptions.trim();
                 ModalityState modality = ModalityState.defaultModalityState();
@@ -65,6 +78,26 @@ public final class MavenBuildService {
                 operation.failed(cancelled);
                 throw cancelled;
             } catch (Exception error) { operation.failed(error); }
+        });
+    }
+
+    private static boolean sameJavaHome(Sdk sdk, String home) {
+        return sdk.getSdkType() instanceof JavaSdk && sdk.getHomePath() != null
+                && Path.of(sdk.getHomePath()).toAbsolutePath().normalize().equals(Path.of(home).toAbsolutePath().normalize());
+    }
+
+    /** Persist the normal IDE SDK entry so native Maven Rerun retains the selected JDK. */
+    private static String registerBuildJdk(Sdk candidate) {
+        return WriteAction.compute(() -> {
+            var table = ProjectJdkTable.getInstance();
+            for (Sdk sdk : table.getAllJdks()) if (sameJavaHome(sdk, candidate.getHomePath())) return sdk.getName();
+            String name = candidate.getName();
+            for (int suffix = 2; table.findJdk(name) != null; suffix++) name = candidate.getName() + " " + suffix;
+            if (!name.equals(candidate.getName())) {
+                var editor = candidate.getSdkModificator(); editor.setName(name); editor.commitChanges();
+            }
+            table.addJdk(candidate);
+            return candidate.getName();
         });
     }
 

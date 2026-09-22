@@ -51,6 +51,7 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
         var processes = WildFlyProcessService.getInstance();
         var contentManager = ExecutionManager.getInstance(getProject()).getContentManager();
         var originalDescriptors = List.copyOf(contentManager.getAllDescriptors());
+        var originalJdks = List.of(com.intellij.openapi.projectRoots.ProjectJdkTable.getInstance().getAllJdks());
         try {
             background(() -> {
                 Path configuration = base.resolve("configuration"); Files.createDirectories(configuration);
@@ -173,6 +174,11 @@ public class WildFlyRuntimeTest extends BasePlatformTestCase {
                 if (session.getExecutionConsole() != null) Disposer.dispose(session.getExecutionConsole());
             }
             settings.loadState(previous); TrustedProjects.setProjectTrusted(getProject(), trusted);
+            com.intellij.openapi.application.WriteAction.run(() -> {
+                var table = com.intellij.openapi.projectRoots.ProjectJdkTable.getInstance();
+                for (var sdk : table.getAllJdks())
+                    if (!originalJdks.contains(sdk) && sdk.getName().startsWith("WildFly build (")) table.removeJdk(sdk);
+            });
             temporary.delete();
         }
     }

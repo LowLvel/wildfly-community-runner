@@ -143,6 +143,8 @@ Maven builds use IntelliJ's bundled Maven runner and its Maven configuration.
 **Build JAVA_HOME** overrides the build JDK independently of the server JDK; when
 empty, Maven keeps the IDE runner JRE and Gradle keeps its inherited environment.
 Gradle builds are wrapper/CLI executions, not IntelliJ Gradle JVM executions.
+Maven reuses an IDE SDK for the selected path or registers one, so native Maven
+Rerun keeps the chosen JDK.
 
 Gradle builds prefer the service's `gradlew` / `gradlew.bat`, walking upward from the selected module. If no wrapper is found, system Gradle is used.
 

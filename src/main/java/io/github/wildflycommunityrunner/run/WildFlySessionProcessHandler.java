@@ -27,6 +27,7 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
     private final AfterLaunch afterLaunch;
     private Request request = Request.NONE;
     private Launch launch;
+    private volatile Integer preparationExit;
     private SecretRedactor redactor = new SecretRedactor(java.util.List.of());
     private final java.util.Map<Key<?>, SecretRedactor.Lines> streams = new java.util.concurrent.ConcurrentHashMap<>();
     private final ProcessListener listener = new ProcessListener() {
@@ -34,7 +35,10 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
             if (!isProcessTerminated()) streams.computeIfAbsent(outputType,
                     key -> redactor.new Lines(text -> notifyTextAvailable(text, key))).accept(event.getText());
         }
-        @Override public void processTerminated(@NotNull ProcessEvent event) { finish(event.getExitCode()); }
+        @Override public void processTerminated(@NotNull ProcessEvent event) {
+            Integer failed = preparationExit;
+            finish(failed == null ? event.getExitCode() : failed);
+        }
     };
 
     WildFlySessionProcessHandler(Launcher launcher, Executor executor) {
@@ -68,8 +72,9 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
                 if (pending == Request.NONE) {
                     Integer exit = result.handler().getExitCode();
                     if (exit != null) finish(exit);
-                    else if (afterLaunch != null) afterLaunch.run(this::cancelled,
-                            text -> notifyTextAvailable(redactor.redact(text) + "\n", ProcessOutputTypes.STDOUT));
+                    else if (afterLaunch != null) afterLaunch.run(this::cancelled, text -> {
+                        if (!cancelled()) notifyTextAvailable(redactor.redact(text) + "\n", ProcessOutputTypes.STDOUT);
+                    });
                 }
             } catch (ProcessCanceledException cancelled) {
                 finish(130);
@@ -79,12 +84,15 @@ final class WildFlySessionProcessHandler extends ProcessHandler {
                 finish(130);
             } catch (Exception e) {
                 Launch current;
-                synchronized (this) { current = launch; }
-                if (!isProcessTerminated()) {
-                    notifyTextAvailable("Cannot start WildFly: " + SensitiveProperties.redactProperties(e.getMessage()) + "\n", ProcessOutputTypes.STDERR);
-                    finish(1);
+                synchronized (this) {
+                    if (isProcessTerminated() || request == Request.DETACH) return;
+                    current = launch;
+                    preparationExit = 1;
+                    notifyTextAvailable("Cannot prepare WildFly session: " + redactor.redact(SensitiveProperties.redactProperties(e.getMessage())) + "\n", ProcessOutputTypes.STDERR);
                 }
-                if (current != null && current.ownsProcess()) current.handler().destroyProcess();
+                // Keep the listener until owned shutdown completes so Rerun cannot reuse a dying server.
+                if (current != null && current.ownsProcess() && !current.handler().isProcessTerminated()) current.handler().destroyProcess();
+                else finish(1);
             }
         });
     }

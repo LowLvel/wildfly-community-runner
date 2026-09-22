@@ -95,12 +95,12 @@ public final class BuildBatch {
     }
 
     private void deployOrAdvance(ServiceProfile service) {
-            boolean deploy = server != null && (mode == Mode.FORCE_DEPLOY || mode == Mode.AUTO && external && service.deployAfterBuild);
-            if (!deploy) { advance(); return; }
-            deploying = true;
-            update("Deploying " + (index + 1) + "/" + services.size() + ": " + service.name, true);
-            try { backend.deploy(service, server).whenComplete((ok, failure) -> executor.execute(() -> deployed(ok, failure))); }
-            catch (Exception failure) { failed(failure); }
+        boolean deploy = server != null && (mode == Mode.FORCE_DEPLOY || mode == Mode.AUTO && external && service.deployAfterBuild);
+        if (!deploy) { advance(); return; }
+        deploying = true;
+        update("Deploying " + (index + 1) + "/" + services.size() + ": " + service.name, true);
+        try { backend.deploy(service, server).whenComplete((ok, failure) -> executor.execute(() -> deployed(ok, failure))); }
+        catch (Exception failure) { failed(failure); }
     }
 
     private synchronized void deployed(Boolean ok, Throwable error) {
