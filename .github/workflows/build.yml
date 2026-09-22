@@ -53,6 +53,9 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Prepare checksum-pinned WildFly runtime fixture
+        shell: bash
+        run: python3 scripts/prepare_wildfly.py
       - name: Compile, test, validate, and package
         shell: bash
         run: |
@@ -78,6 +81,10 @@ jobs:
           if executed == 0:
               raise SystemExit('No regression tests executed')
           print(f'{executed} regression tests executed')
+          for required in ('WildFlyRuntimeTest', 'NativeMavenRuntimeTest'):
+              report = next((ET.parse(p).getroot() for p in reports if p.stem.endswith('.' + required)), None)
+              if report is None or int(report.get('tests', 0)) < 1 or int(report.get('skipped', 0)):
+                  raise SystemExit(f'Required runtime fixture did not execute: {required}')
           PY
       - name: Upload candidate plugin
         if: matrix.os == 'ubuntu-latest'

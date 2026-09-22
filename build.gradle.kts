@@ -67,6 +67,10 @@ tasks {
     test {
         useJUnit()
         systemProperty("wildfly.test.gradleHome", requireNotNull(gradle.gradleHomeDir).absolutePath)
+        environment("WILDFLY_SMOKE_PASSWORD", "wildfly-smoke-fixture-value")
+        if (!providers.environmentVariable("WILDFLY_TEST_HOME").isPresent) {
+            exclude("**/WildFlyRuntimeTest.class")
+        }
         testLogging {
             events("passed", "skipped", "failed")
             exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
