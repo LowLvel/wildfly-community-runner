@@ -54,6 +54,20 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+      - name: Recreate restored Windows IDE transforms
+        if: runner.os == 'Windows'
+        shell: python
+        run: |
+          import os, shutil
+          from pathlib import Path
+          # IDE runtime fixtures can modify extracted IDEs. Keep downloaded archives
+          # and dependencies, but do not reuse those mutable transform workspaces.
+          cache = (Path(os.environ['GRADLE_USER_HOME']) / 'caches').resolve()
+          for path in cache.glob('*/transforms'):
+              if path.is_symlink() or not path.resolve().is_relative_to(cache):
+                  raise RuntimeError('Transform cache resolves outside Gradle caches')
+              if path.is_dir():
+                  shutil.rmtree(path)
       - name: Prepare checksum-pinned WildFly runtime fixture
         shell: bash
         run: python3 scripts/prepare_wildfly.py
@@ -61,7 +75,8 @@ jobs:
         shell: bash
         run: |
           python3 -m unittest discover -s scripts -p 'test_*.py'
-          python3 scripts/ci_gradle.py verifyPluginProjectConfiguration test buildPlugin verifyPluginStructure
+          # Execute fixtures to regenerate screenshots and validate this runner.
+          python3 scripts/ci_gradle.py verifyPluginProjectConfiguration test --rerun buildPlugin verifyPluginStructure
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
