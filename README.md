@@ -23,6 +23,11 @@ a local WildFly installation, and a JDK supported by your WildFly version.
 Enable **Auto** to redeploy whenever a built archive changes. For Run/Debug or
 debugger attachment, use **Run → Edit Configurations → WildFly**.
 
+## Current limitations
+
+Domain mode, remote deployment management, and per-service logs are not supported.
+Auto Redeploy watches built archives; it does not rebuild on source edits.
+
 ## Documentation
 
 [User guide](docs/USAGE.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) ·
