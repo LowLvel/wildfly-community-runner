@@ -10,9 +10,14 @@ Run/Debug configurations. Version **0.6.0** is the Marketplace release candidate
 ## Installation
 
 Use IntelliJ IDEA 2025.1–2026.2 with its Java and Maven plugins enabled. Download
-the candidate ZIP from a successful GitHub Actions run, then choose **Settings →
+the plugin ZIP from the newest **Main build** on the
+[Releases page](https://github.com/LowLvel/wildfly-community-runner/releases),
+without needing a GitHub login, then choose **Settings →
 Plugins → gear menu → Install Plugin from Disk**. Select the plugin ZIP, without
 extracting it. The initial Marketplace listing still requires maintainer submission.
+
+Successful `main` builds automatically publish the verified unsigned ZIP and its
+SHA-256 checksum as a development prerelease.
 
 Install WildFly separately and select a JDK supported by that server version.
 The plugin supports local standalone mode and requires no paid IDE application-server integration.

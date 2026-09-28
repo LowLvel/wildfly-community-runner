@@ -1,9 +1,25 @@
 # Releasing
 
-The repository builds an unsigned candidate on pull requests. It does not publish
-or create a tag automatically. `gradle.properties` is the source of the plugin
-version. Review [validation](VALIDATION.md), the changelog, metadata, and screenshots
-before merging a candidate into `main`.
+The repository builds an unsigned candidate on pull requests. Successful pushes
+to `main` automatically publish that candidate as a public GitHub prerelease.
+`gradle.properties` is the source of the plugin version. Review
+[validation](VALIDATION.md), the changelog, metadata, and screenshots before
+merging a candidate into `main`.
+
+## Public ZIP downloads
+
+After **Build and verify** succeeds for a push to `main`, **Publish public ZIP**
+downloads `plugin-candidate` from that exact run, checks its plugin ID and version,
+and publishes the ZIP plus `SHA256SUMS` on the
+[Releases page](https://github.com/LowLvel/wildfly-community-runner/releases).
+Release assets can be downloaded without signing in to GitHub.
+
+Each prerelease uses a `main-<full commit SHA>` tag pointing to the validated
+commit. The workflow uploads assets to a draft before making it public; reruns
+can resume an incomplete draft and leave an already published release unchanged.
+Pull requests, failed builds, and manual validation runs do not publish releases.
+The ZIP is unsigned, and the workflow needs only the repository's built-in
+`GITHUB_TOKEN`. It does not rebuild the plugin or require Marketplace secrets.
 
 ## Repository setup
 
@@ -55,8 +71,9 @@ actions and credentials are not supplied by this repository.
 
 After a listing exists, **action = publish-update** runs the complete validation
 and signing path, then explicitly invokes `publishPlugin` for the default channel.
-Use a new version for each published update. No workflow merges a PR, creates a
-GitHub release/tag, or changes the listing's screenshots automatically.
+Use a new version for each published update. The Marketplace workflow does not
+merge a PR or change the listing's screenshots automatically. Public GitHub
+prereleases are handled separately as described above.
 
 For a rollback, keep the earlier known-good ZIP and release evidence. Test a fixed
 version with a higher version number before uploading it; do not reuse a published

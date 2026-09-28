@@ -1,0 +1,72 @@
+name: Publish public ZIP
+
+on:
+  workflow_run:
+    workflows: [Build and verify]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: public-download-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish verified main build
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    env:
+      SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: plugin-candidate
+          path: build/candidate
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Validate the exact ZIP from the successful build
+        run: python3 scripts/release_manifest.py --candidate-directory build/candidate --commit "$SOURCE_SHA"
+      - name: Publish ZIP and checksum as a public prerelease
+        working-directory: build/release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="main-${SOURCE_SHA}"
+          archive="$(basename "$CANDIDATE_ARCHIVE")"
+          sha256sum "$archive" > SHA256SUMS
+          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
+          Verified development build from main at ${SOURCE_SHA}.
+
+          Download **${archive}** below; no GitHub login is required. In IntelliJ IDEA, use **Settings → Plugins → gear menu → Install Plugin from Disk** and select the ZIP without extracting it.
+
+          This is the unsigned plugin ZIP from the [successful validation run](https://github.com/${GH_REPO}/actions/runs/${SOURCE_RUN_ID}). SHA256SUMS contains its checksum. Marketplace signing and publishing are separate.
+          EOF
+          if draft="$(gh release view "$tag" --json isDraft --jq .isDraft)"; then
+            if [ "$draft" = false ]; then
+              echo "Already published: $tag"
+              exit 0
+            fi
+          else
+            gh release create "$tag" --target "$SOURCE_SHA" --draft --prerelease --latest=false \
+              --title "Main build ${SOURCE_SHA:0:7}" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
+          # A failed upload can be retried while the release is still a draft.
+          gh release upload "$tag" "$archive" SHA256SUMS --clobber
+          gh release edit "$tag" --draft=false --prerelease --latest=false
+          echo "[Download plugin ZIP](https://github.com/${GH_REPO}/releases/download/${tag}/${archive})" >> "$GITHUB_STEP_SUMMARY"
