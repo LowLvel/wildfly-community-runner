@@ -39,6 +39,10 @@ public class FailurePresentationTest extends BasePlatformTestCase {
             JTabbedPane tabs = find(created.get(), JTabbedPane.class);
             assertNotNull(table);
             assertFalse(find(created.get(), FireflyIndicator.class).isVisible());
+            settings.update(state -> state.showFirefly = true);
+            getProject().getMessageBus().syncPublisher(io.github.wildflycommunityrunner.services.ProjectSetupService.CHANGED).initialized();
+            PlatformTestUtil.dispatchAllEventsInIdeEventQueue();
+            assertTrue(find(created.get(), FireflyIndicator.class).isVisible());
             table.setRowSelectionInterval(0, 0);
             tabs.setSelectedIndex(0);
             var feedback = getProject().getService(OperationFeedback.class);

@@ -20,6 +20,7 @@ public final class FireflyIndicator extends JComponent implements Disposable {
     private Mode mode = Mode.RESTING;
     private boolean reducedMotion;
     private boolean disposed;
+    private boolean removed;
     private long celebrationUntil;
     private int frame;
 
@@ -65,14 +66,14 @@ public final class FireflyIndicator extends JComponent implements Disposable {
         repaint();
     }
     public void celebrate() {
-        if (disposed || reducedMotion || !showing.getAsBoolean()
+        if (disposed || removed || reducedMotion || !showing.getAsBoolean()
                 || mode == Mode.ATTENTION || mode == Mode.WORKING || mode == Mode.STARTING) return;
         celebrationUntil = clock.getAsLong() + 2_400_000_000L;
         updateTimer();
     }
     private void updateTimer() {
         boolean moving = mode == Mode.STARTING || mode == Mode.WORKING || clock.getAsLong() < celebrationUntil;
-        if (!disposed && !reducedMotion && showing.getAsBoolean() && moving) animation.start();
+        if (!disposed && !removed && !reducedMotion && showing.getAsBoolean() && moving) animation.start();
         else animation.stop();
     }
     void tick() {
@@ -81,7 +82,13 @@ public final class FireflyIndicator extends JComponent implements Disposable {
         repaint();
     }
     boolean isAnimating() { return animation.isRunning(); }
+    @Override public void addNotify() {
+        super.addNotify();
+        removed = false;
+        updateTimer();
+    }
     @Override public void removeNotify() {
+        removed = true;
         animation.stop();
         celebrationUntil = 0;
         super.removeNotify();

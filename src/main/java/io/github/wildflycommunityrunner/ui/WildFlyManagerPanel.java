@@ -661,6 +661,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         refreshServers();
         selectServerById(WildFlyProjectSettings.getInstance(project).getState().selectedServerId);
         refreshServiceTablePreservingSelection();
+        applyFireflyPreferences();
         loading = false;
         serverLog.setProfile(selectedServer());
         syncAutoDeployWatcher();
@@ -1589,8 +1590,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private void applyFireflyPreferences() {
-        firefly.setVisible(projectState().showFirefly);
-        firefly.setReducedMotion(projectState().reduceFireflyMotion);
+        var preferences = WildFlyProjectSettings.getInstance(project).getState();
+        firefly.setVisible(preferences.showFirefly);
+        firefly.setReducedMotion(preferences.reduceFireflyMotion);
     }
 
     private void updateFirefly() {

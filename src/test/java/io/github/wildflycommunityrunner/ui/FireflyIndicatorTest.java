@@ -52,7 +52,10 @@ public class FireflyIndicatorTest extends BasePlatformTestCase {
             indicator.setMode(FireflyIndicator.Mode.WORKING);
             assertTrue(indicator.isAnimating());
             indicator.removeNotify();
+            indicator.tick(); // A queued timer event must not restart a removed component.
             assertFalse(indicator.isAnimating());
+            indicator.addNotify();
+            assertTrue(indicator.isAnimating());
         } finally { indicator.dispose(); }
     }
 }
