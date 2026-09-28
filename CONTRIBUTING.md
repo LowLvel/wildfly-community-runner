@@ -32,8 +32,9 @@ indiscriminately. Avoid internal APIs even when they appear to work on one IDE.
 
 Pull requests should describe the user-visible trigger, resulting behavior, and
 validation evidence. Do not commit generated plugin/source ZIPs, build caches,
-credentials, private keys, or private application logs. Screenshots use the sample
-workspace renderer and are reviewed before inclusion in documentation.
+credentials, private keys, or private application logs. Product screenshots must
+be captured from the installed plugin in a running IDE, using non-sensitive sample
+projects. Component test renders are not product screenshots.
 
 For ordinary bugs, include the IDE build, plugin/JDK/WildFly versions, operating
 system, and a minimal reproduction in a GitHub issue. Remove credentials and

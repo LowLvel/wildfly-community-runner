@@ -35,11 +35,6 @@ Server controls are deliberately compact: Start, Debug, Stop, and a chevron menu
 
 The service list uses IntelliJ's collection toolbar for Add/Edit/Remove/Discover. Shift-click selects a range and Ctrl/Cmd-click toggles individual rows. Services are sorted lexicographically by their hierarchy-aware display name.
 
-![Services and external deployments in a labelled sample workspace](images/services.png)
-
-Component screenshots use sample data in the IntelliJ test application's default
-Swing theme. See [image provenance](MARKETPLACE.md#images).
-
 ## Project services
 
 Each configured service stores:
@@ -310,8 +305,6 @@ unloading/reloading it before requesting a server restart that needs its private
 argument file.
 
 ## Server log viewer
-
-![Server log viewer with pause, follow, filtering, and editor controls](images/server-log.png)
 
 The **server.log** tab reads the selected profile's log in the background while the
 tab is visible. It follows rotation, truncation, and delayed file creation, with no

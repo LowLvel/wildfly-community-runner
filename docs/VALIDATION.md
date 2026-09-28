@@ -77,8 +77,9 @@ run. Use a fresh `build/runtime` directory when downloading again. The download
 script is test infrastructure and is never invoked by plugin onboarding.
 
 `MarketplaceScreenshotsTest` paints actual plugin components with sample data into
-1280×800 PNGs. Linux CI retains these as `marketplace-screenshots`; inspect them
-visually before using them in documentation or Marketplace Media. A disposable
+1280×800 PNGs. Linux CI retains these as `marketplace-screenshots` for inspecting
+component rendering. They are test fixtures, not screenshots of a running IDE;
+do not use them as product or Marketplace screenshots. A disposable
 certificate exercises signing and signature verification without production keys.
 Release manifest tests reject an incorrect ID/version or ambiguous candidate set.
 
@@ -112,7 +113,7 @@ before the initial Marketplace submission.
 9. Settings migration and stale registry cleanup — passed [35746291660](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35746291660): 116 plugin tests on all three operating systems and all six verifier targets. Covers versioned XML migration, detached settings snapshots, concurrent updates, remembered-source relink/forget, cross-project change notifications, and listener cleanup on unload without terminating shared servers.
 10. Sensitive JVM properties — passed [35753926376](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35753926376): 140 plugin tests on all three operating systems and all six verifier targets. Includes credential transactions, background migration, owner-restricted argument files, Windows encoding/quoting, real Java and Gradle processes, JVM-option precedence, output redaction, and Maven configuration serialization/rerun lifecycle tests. Maven lifecycle fixtures use fake process handlers; a full native Maven launch remains part of the final runtime validation.
 11. Server log viewer — passed [35758016770](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35758016770): 156 plugin tests on all three operating systems and all six verifier targets. Covers bounded UTF-8 tails, rotation/truncation, filesystem metadata fallbacks, complete-line redaction, visibility/pause/filter/follow controls, and stale callback expiry. Also verifies Maven argument-file cleanup with unquoted Unix command presentations containing spaces.
-12. Marketplace metadata, icons, documentation, and release/runtime infrastructure — passed [35766719290](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35766719290): 165 plugin tests and 11 Python tests on all three operating systems, all six verifier targets, plugin structure checks, and signing plus executed signature verification. The real WildFly fixture covers native run state, process identity, reuse/Stop, JDWP attach/disconnect, HTTP, secret/TNS property delivery, deploy/redeploy/undeploy, and server.log. Actual native Maven launch/rerun and private-file cleanup also pass on each OS. Generated component images receive a separate visual review before being checked in.
+12. Marketplace metadata, icons, documentation, and release/runtime infrastructure — passed [35766719290](https://github.com/LowLvel/wildfly-community-runner/actions/runs/35766719290): 165 plugin tests and 11 Python tests on all three operating systems, all six verifier targets, plugin structure checks, and signing plus executed signature verification. The real WildFly fixture covers native run state, process identity, reuse/Stop, JDWP attach/disconnect, HTTP, secret/TNS property delivery, deploy/redeploy/undeploy, and server.log. Actual native Maven launch/rerun and private-file cleanup also pass on each OS. Generated component images are test renders, not captures of an interactive IDE session.
 
 Each major stage requires compilation, tests, and applicable verifier results
 before the following stage begins. Preserve the architecture boundaries in

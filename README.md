@@ -23,8 +23,6 @@ a local WildFly installation, and a JDK supported by your WildFly version.
 Enable **Auto** to redeploy whenever a built archive changes. For Run/Debug or
 debugger attachment, use **Run → Edit Configurations → WildFly**.
 
-![WildFly services tool window — sample workspace](docs/images/services.png)
-
 ## Documentation
 
 [User guide](docs/USAGE.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) ·
