@@ -23,6 +23,8 @@ public final class WildFlyProjectSettings implements PersistentStateComponent<Wi
         public String selectedServiceId = "";
         public List<ServiceProfile> services = new ArrayList<>();
         public boolean onboardingCompleted;
+        public boolean showFirefly = true;
+        public boolean reduceFireflyMotion;
 
         // Kept only to make upgrades from the first MVP non-destructive.
         public String artifactPath = "";
@@ -56,6 +58,8 @@ public final class WildFlyProjectSettings implements PersistentStateComponent<Wi
         result.selectedServerId = SettingsMigration.text(source.selectedServerId);
         result.selectedServiceId = SettingsMigration.text(source.selectedServiceId);
         result.onboardingCompleted = source.onboardingCompleted;
+        result.showFirefly = source.showFirefly;
+        result.reduceFireflyMotion = source.reduceFireflyMotion;
         result.artifactPath = SettingsMigration.text(source.artifactPath);
         result.mavenGoals = SettingsMigration.text(source.mavenGoals);
         result.mavenWorkingDirectory = SettingsMigration.text(source.mavenWorkingDirectory);

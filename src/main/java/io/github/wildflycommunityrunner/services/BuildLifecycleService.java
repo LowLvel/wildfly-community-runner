@@ -89,12 +89,17 @@ public final class BuildLifecycleService implements Disposable {
         };
         var batch = new BuildBatch(services, server, mode, external, backend,
                 command -> ApplicationManager.getApplication().executeOnPooledThread(command), this::changed);
+        var sourceIds = services.stream().map(service -> service.id).toList();
         active = batch;
+        var feedback = project.getService(OperationFeedback.class);
+        feedback.dismiss(feedback.latest());
         changed(batch.status());
         batch.completion().thenAccept(result -> {
             synchronized (BuildLifecycleService.this) { if (active == batch) active = null; }
             if (result.outcome() == BuildOperation.Outcome.FAILED && !result.failureReported()) {
-                PluginNotifications.failure(project, "Build operation failed", result.detail(), output);
+                String sourceId = sourceIds.get(Math.min(batch.status().completed(), sourceIds.size() - 1));
+                PluginNotifications.failure(project, "Build operation failed", result.detail(), output,
+                        sourceId, server == null ? "" : server.id);
             } else output.accept(result.detail());
         });
         IdeUi.later(project, () -> disposed || batch.completion().isDone(), () -> new Task.Backgroundable(project, "WildFly build", true) {

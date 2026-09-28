@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.6.1
+
+- Optional firefly in the server header, with bounded success animation, reduced
+  motion, and a hide option. Animation stops while the tool window is hidden.
+- Persistent, dismissible failures with activity, server-log, and profile actions
+  tied to the original operation rather than the current selection.
+- Clearer service-table empty states and headings, less visual clutter, and an
+  idle build footer that hides Cancel when nothing is running.
+
+## Earlier improvements
 
 - Selected applications in native Local Server Run/Debug: start/reuse, wait for
   the expected HTTP endpoint, build, and deploy with cancellation and ownership.
