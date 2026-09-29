@@ -63,6 +63,7 @@ public class BuildBatchTest extends BasePlatformTestCase {
         h.exit(0);
         h.deploys.getLast().complete(true); h.drain();
         assertEquals(BuildOperation.Outcome.SUCCESS, batch.completion().join().outcome());
+        assertEquals(BuildOperation.Outcome.SUCCESS, batch.status().outcome());
         assertEquals(0, h.leases);
         assertEquals(2, h.releases);
     }
@@ -76,6 +77,7 @@ public class BuildBatchTest extends BasePlatformTestCase {
         assertFalse(batch.completion().isDone());
         h.exit(0);
         assertEquals(BuildOperation.Outcome.CANCELLED, batch.completion().join().outcome());
+        assertEquals(BuildOperation.Outcome.CANCELLED, batch.status().outcome());
         assertEquals(1, h.builds.size());
         assertEquals(2, h.releases);
         assertTrue(h.deploys.isEmpty());
@@ -90,6 +92,7 @@ public class BuildBatchTest extends BasePlatformTestCase {
         assertFalse(batch.completion().isDone());
         h.deploys.getFirst().complete(true); h.drain();
         assertEquals(BuildOperation.Outcome.CANCELLED, batch.completion().join().outcome());
+        assertEquals(BuildOperation.Outcome.CANCELLED, batch.status().outcome());
         assertEquals(1, h.builds.size());
         assertEquals(2, h.releases);
     }
@@ -99,6 +102,7 @@ public class BuildBatchTest extends BasePlatformTestCase {
         var batch = h.batch(BuildBatch.Mode.FORCE_DEPLOY, false); h.drain(); h.exit(2);
         batch.cancel(); batch.dispose(); h.drain();
         assertEquals(BuildOperation.Outcome.FAILED, batch.completion().join().outcome());
+        assertEquals(BuildOperation.Outcome.FAILED, batch.status().outcome());
         assertEquals(1, h.builds.size());
         assertEquals(2, h.releases);
         assertTrue(h.deploys.isEmpty());
@@ -144,6 +148,7 @@ public class BuildBatchTest extends BasePlatformTestCase {
         assertEquals(2, h.leases);
         h.deploys.getLast().complete(true); h.drain();
         assertEquals(BuildOperation.Outcome.SUCCESS, batch.completion().join().outcome());
+        assertEquals(BuildOperation.Outcome.SUCCESS, batch.status().outcome());
         assertEquals(0, h.leases); assertEquals(2, h.releases);
     }
 }

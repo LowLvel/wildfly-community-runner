@@ -6,8 +6,6 @@ import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.wm.ToolWindowManager;
-import io.github.wildflycommunityrunner.util.IdeUi;
 import java.util.function.Consumer;
 
 /** One notification per failed operation; subprocess output and refreshes do not produce balloons. */
@@ -24,14 +22,26 @@ public final class PluginNotifications {
         failure(project, operation, message(error), output);
     }
 
+    public static void failure(Project project, String operation, Throwable error, Consumer<String> output,
+                               String serviceId, String serverId) {
+        if (error instanceof ProcessCanceledException cancelled) throw cancelled;
+        if (error instanceof InterruptedException) { Thread.currentThread().interrupt(); return; }
+        failure(project, operation, message(error), output, serviceId, serverId);
+    }
+
     public static void failure(Project project, String operation, String details, Consumer<String> output) {
+        failure(project, operation, details, output, "", "");
+    }
+
+    public static void failure(Project project, String operation, String details, Consumer<String> output,
+                               String serviceId, String serverId) {
         if (project.isDisposed()) return;
-        if (output != null) output.accept(operation + ": " + details);
-        Notification notification = createFailure(operation, details);
-        notification.addAction(NotificationAction.createSimple("Open WildFly", () -> IdeUi.later(project, () -> {
-            var window = ToolWindowManager.getInstance(project).getToolWindow("WildFly");
-            if (window != null) window.show(null);
-        })));
+        var feedback = project.getService(OperationFeedback.class);
+        var failure = feedback.report(operation, details, serviceId, serverId);
+        if (output != null) output.accept(failure.title() + ": " + failure.detail());
+        Notification notification = createFailure(failure.title(), failure.detail() + "\n" + failure.hint());
+        for (var action : failure.actions()) notification.addAction(NotificationAction.createSimple(action.label,
+                () -> feedback.navigate(failure, action)));
         notification.notify(project);
     }
 

@@ -13,6 +13,9 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.ui.ToolbarDecorator;
+import com.intellij.ui.table.JBTable;
+import io.github.wildflycommunityrunner.services.OperationFeedback;
+import io.github.wildflycommunityrunner.services.BuildOperation;
 import com.intellij.util.ui.JBUI;
 import io.github.wildflycommunityrunner.model.BuildSystem;
 import io.github.wildflycommunityrunner.model.ServerProfile;
@@ -79,12 +82,18 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private WildFlyProjectSettings.StateData projectStateView = new WildFlyProjectSettings.StateData();
     private final JComboBox<ServerProfile> serverCombo = new JComboBox<>();
     private final JLabel serverStateLabel = new JLabel(" ");
+    private final FireflyIndicator firefly = new FireflyIndicator();
+    private final FailureBanner failureBanner;
+    private WildFlyProcessService.ServerState visibleServerState = WildFlyProcessService.ServerState.STOPPED;
+    private String startingServerId = "";
+    private BuildBatch.Status lastBuildStatus;
+    private OperationFeedback.Failure displayedFailure;
     private final JPanel onboardingHint = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
 
     private final ServiceTableModel serviceTableModel = new ServiceTableModel();
-    private final JTable serviceTable = new JTable(serviceTableModel);
+    private final JTable serviceTable = new JBTable(serviceTableModel);
     private final ExternalTableModel externalTableModel = new ExternalTableModel();
-    private final JTable externalTable = new JTable(externalTableModel);
+    private final JTable externalTable = new JBTable(externalTableModel);
     private final JPanel externalSection = new JPanel(new BorderLayout(4, 4));
     private final JLabel buildProgress = new JLabel("No build running");
     private final JButton cancelBuild = new JButton("Cancel Build");
@@ -112,6 +121,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     public WildFlyManagerPanel(Project project) {
         super(new BorderLayout());
         this.project = project;
+        failureBanner = new FailureBanner(this::openFailureAction,
+                failure -> project.getService(OperationFeedback.class).dismiss(failure));
+        com.intellij.openapi.util.Disposer.register(this, firefly);
         serverLog = new ServerLogPanel(project, this::openInEditor);
         com.intellij.openapi.util.Disposer.register(this, serverLog);
         WeakReference<WildFlyManagerPanel> weakPanel = new WeakReference<>(this);
@@ -131,6 +143,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                     @Override public void serversChanged() { onUi(WildFlyManagerPanel.this::refreshGlobalServers); }
                     @Override public void sourcesChanged() { onUi(WildFlyManagerPanel.this::refreshExternalDeployments); }
                 });
+        project.getMessageBus().connect(this).subscribe(OperationFeedback.CHANGED, () -> onUi(this::refreshFailure));
+        project.getMessageBus().connect(this).subscribe(OperationFeedback.NAVIGATE, this::openFailureAction);
+        refreshFailure();
         refreshBuildProgress();
         refreshTimer = new Timer(2000, e -> {
             if (disposed || project.isDisposed()) {
@@ -159,7 +174,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private void buildUi() {
         JPanel servicesTab = new JPanel(new BorderLayout(5, 5));
         servicesTab.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
-        servicesTab.add(buildServerPanel(), BorderLayout.NORTH);
+        JPanel heading = new JPanel(new BorderLayout(0, JBUI.scale(6)));
+        heading.add(buildServerPanel(), BorderLayout.NORTH);
+        heading.add(failureBanner, BorderLayout.SOUTH);
+        servicesTab.add(heading, BorderLayout.NORTH);
         servicesTab.add(buildServicesWorkspace(), BorderLayout.CENTER);
         JPanel footer = new JPanel(new BorderLayout(4, 4));
         footer.add(buildSelectionActionBar(), BorderLayout.NORTH);
@@ -209,7 +227,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         title.setFont(title.getFont().deriveFont(Font.BOLD));
         serverStateLabel.setHorizontalAlignment(SwingConstants.RIGHT);
         header.add(title, BorderLayout.WEST);
-        header.add(serverStateLabel, BorderLayout.EAST);
+        JPanel state = new JPanel(new BorderLayout(JBUI.scale(4), 0));
+        state.add(serverStateLabel, BorderLayout.CENTER);
+        state.add(firefly, BorderLayout.EAST);
+        header.add(state, BorderLayout.EAST);
         panel.add(header, BorderLayout.NORTH);
 
         JPanel row = new JPanel(new BorderLayout(4, 0));
@@ -234,6 +255,21 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         menu.add(add); menu.add(edit); menu.add(remove);
         menu.addSeparator();
         menu.add(config); menu.add(home); menu.add(deployments); menu.add(log);
+        menu.addSeparator();
+        JCheckBoxMenuItem showFirefly = new JCheckBoxMenuItem("Show firefly",
+                WildFlyProjectSettings.getInstance(project).getState().showFirefly);
+        JCheckBoxMenuItem reduceMotion = new JCheckBoxMenuItem("Reduce firefly motion",
+                WildFlyProjectSettings.getInstance(project).getState().reduceFireflyMotion);
+        showFirefly.addActionListener(event -> onUi(() -> {
+            updateProject(settings -> settings.showFirefly = showFirefly.isSelected());
+            applyFireflyPreferences();
+        }));
+        reduceMotion.addActionListener(event -> onUi(() -> {
+            updateProject(settings -> settings.reduceFireflyMotion = reduceMotion.isSelected());
+            applyFireflyPreferences();
+        }));
+        menu.add(showFirefly);
+        menu.add(reduceMotion);
         JButton more = popupButton(AllIcons.General.ArrowDown, "More server actions", menu);
 
         JPanel toolbar = compactToolbar(start, debug, stop, more);
@@ -249,7 +285,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
             if (loading) return;
             onUi(() -> {
                 deploymentStatuses = Map.of();
+                visibleServerState = WildFlyProcessService.ServerState.STOPPED;
                 statusServerId = "";
+                updateFirefly();
                 saveSelectedServer();
                 syncAutoDeployWatcher();
                 serviceTable.repaint();
@@ -274,6 +312,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private JComponent buildServicesWorkspace() {
         configureProjectServiceTable();
         configureExternalTable();
+        ((JBTable) serviceTable).getEmptyText().setText("No services yet — use + or Discover Projects");
+        ((JBTable) externalTable).getEmptyText().setText("No external deployments");
 
         JComponent projectTablePanel = ToolbarDecorator.createDecorator(serviceTable)
                 .setAddAction(button -> onUi(this::addCustomService))
@@ -300,6 +340,9 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                 .createPanel();
 
         JPanel workspace = new JPanel(new BorderLayout(4, 4));
+        JLabel servicesTitle = new JLabel("Project services");
+        servicesTitle.setFont(servicesTitle.getFont().deriveFont(Font.BOLD));
+        workspace.add(servicesTitle, BorderLayout.NORTH);
         workspace.add(projectTablePanel, BorderLayout.CENTER);
 
         JPanel externalHeader = new JPanel(new BorderLayout(4, 0));
@@ -308,7 +351,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         JLabel externalHint = new JLabel("Scanner deployments outside this project's service list");
         externalHint.setForeground(UIManager.getColor("Label.disabledForeground"));
         externalHeader.add(externalTitle, BorderLayout.WEST);
-        externalHeader.add(externalHint, BorderLayout.EAST);
+        externalTitle.setToolTipText(externalHint.getText());
         externalSection.setBorder(BorderFactory.createEmptyBorder(5, 0, 0, 0));
         externalSection.add(new JSeparator(), BorderLayout.NORTH);
         JPanel externalBody = new JPanel(new BorderLayout(4, 3));
@@ -324,6 +367,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private void configureProjectServiceTable() {
+        configureTableAppearance(serviceTable);
         serviceTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         serviceTable.setFillsViewportHeight(true);
         serviceTable.setRowHeight(Math.max(serviceTable.getRowHeight(), JBUI.scale(24)));
@@ -366,6 +410,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private void configureExternalTable() {
+        configureTableAppearance(externalTable);
         externalTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         externalTable.setFillsViewportHeight(true);
         externalTable.setRowHeight(Math.max(externalTable.getRowHeight(), JBUI.scale(23)));
@@ -585,6 +630,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         refreshBuildChoices(false);
         WildFlyProjectSettings.getInstance(project).migrateLegacyService();
         projectStateView = WildFlyProjectSettings.getInstance(project).getState();
+        applyFireflyPreferences();
         WildFlyProjectSettings.StateData state = projectState();
         for (ServiceProfile service : state.services) {
             service.migrateLegacyFields();
@@ -615,6 +661,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         refreshServers();
         selectServerById(WildFlyProjectSettings.getInstance(project).getState().selectedServerId);
         refreshServiceTablePreservingSelection();
+        applyFireflyPreferences();
         loading = false;
         serverLog.setProfile(selectedServer());
         syncAutoDeployWatcher();
@@ -853,7 +900,15 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                     if (current == null || !sameServerLocation(current, server)) return;
                     Set<String> selectedNames = new LinkedHashSet<>();
                     for (ExternalDeployment row : selectedExternalDeployments()) selectedNames.add(row.deploymentName());
+                    boolean deployed = statuses.entrySet().stream().anyMatch(entry -> {
+                        var previous = deploymentStatuses.get(entry.getKey());
+                        return previous != null && "DEPLOYED".equals(entry.getValue().state())
+                                && (!"DEPLOYED".equals(previous.state())
+                                || !Objects.equals(previous.deployedAt(), entry.getValue().deployedAt()));
+                    });
                     deploymentStatuses = Map.copyOf(statuses);
+                    updateFirefly();
+                    if (deployed) firefly.celebrate();
                     statusServerId = server.id;
                     externalDeployments = List.copyOf(rows);
                     changingSelection = true;
@@ -923,6 +978,10 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         buildProgress.setText(status.text());
         buildProgress.setToolTipText(status.text());
         cancelBuild.setEnabled(status.active());
+        cancelBuild.setVisible(status.active());
+        updateFirefly();
+        if (status != lastBuildStatus && status.outcome() == BuildOperation.Outcome.SUCCESS) firefly.celebrate();
+        lastBuildStatus = status;
     }
 
     private void redeploySelected() {
@@ -960,7 +1019,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private void deployService(ServiceProfile service, ServerProfile server, Runnable completion) {
         ServerProfile serverSnapshot = new ServerProfile(server);
         ServiceProfile source = io.github.wildflycommunityrunner.services.BuildService.sourceSnapshot(project, service);
-        background("Deployment failed", () -> {
+        background("Deployment failed", serverSnapshot.id, () -> {
             Path artifact = ArtifactLocator.resolve(project, source);
             String name = ArtifactLocator.effectiveDeploymentName(source, artifact);
             source.deploymentName = name;
@@ -1084,13 +1143,13 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private void startServer(boolean debug) {
         ServerProfile profile = requireServer();
         if (profile == null) return;
-        background("WildFly start failed", () -> WildFlyProcessService.getInstance().start(profile, debug, activityOutput));
+        background("WildFly start failed", profile.id, () -> WildFlyProcessService.getInstance().start(profile, debug, activityOutput));
     }
 
     private void startDebug() {
         ServerProfile profile = requireServer();
         if (profile == null) return;
-        background("WildFly debug failed", () -> {
+        background("WildFly debug failed", profile.id, () -> {
             WildFlyProcessService process = WildFlyProcessService.getInstance();
             WildFlyProcessService.ServerState state = process.state(profile);
             if (state == WildFlyProcessService.ServerState.MANAGED) {
@@ -1120,7 +1179,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         ServerProfile profile = new ServerProfile(selected);
         WildFlyProcessService process = WildFlyProcessService.getInstance();
         if (process.isRunning(profile)) {
-            background("WildFly stop failed", () -> process.terminate(profile, activityOutput));
+            background("WildFly stop failed", profile.id, () -> process.terminate(profile, activityOutput));
             return;
         }
         background("WildFly detection failed", () -> {
@@ -1132,7 +1191,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
                             "This WildFly was started outside the current IDE session. One local WildFly process matches this home, server base and configuration. Force stop it?",
                             "Stop Detected WildFly", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
                     if (answer == JOptionPane.YES_OPTION) {
-                        background("WildFly stop failed", () -> process.forceStopDetected(profile, activityOutput));
+                        background("WildFly stop failed", profile.id, () -> process.forceStopDetected(profile, activityOutput));
                     }
                 } else if (detected) {
                     append("WildFly is running at " + process.endpoint(profile) + " but no unique local process could be identified safely, so it was not killed.");
@@ -1211,6 +1270,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     private void refreshServerState() {
         ServerProfile selected = selectedServer();
         if (selected == null) {
+            visibleServerState = WildFlyProcessService.ServerState.STOPPED;
+            updateFirefly();
             serverStateLabel.setText("No server");
             serverStateLabel.setForeground(UIManager.getColor("Label.disabledForeground"));
             return;
@@ -1239,6 +1300,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     }
 
     private void applyServerState(ServerProfile server, WildFlyProcessService.ServerState state) {
+        visibleServerState = state;
+        updateFirefly();
         switch (state) {
             case MANAGED_DEBUG -> {
                 serverStateLabel.setText("Managed debug :" + WildFlyProcessService.getInstance().managedDebugPort(server));
@@ -1473,16 +1536,29 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
     @FunctionalInterface private interface BackgroundAction { void run() throws Exception; }
 
     private void background(String operation, BackgroundAction action) {
+        background(operation, WildFlyProjectSettings.getInstance(project).getState().selectedServerId, action);
+    }
+
+    private void background(String operation, String serverId, BackgroundAction action) {
+        boolean starting = operation.equals("WildFly start failed") || operation.equals("WildFly debug failed");
+        if (starting) onUi(() -> { startingServerId = serverId; updateFirefly(); });
         ApplicationManager.getApplication().executeOnPooledThread(() -> {
             if (disposed || project.isDisposed()) return;
             try { action.run(); }
-            catch (Exception error) { PluginNotifications.failure(project, operation, error, activityOutput); }
+            catch (Exception error) { PluginNotifications.failure(project, operation, error, activityOutput, "", serverId); }
+            finally {
+                if (starting) onUi(() -> {
+                    if (startingServerId.equals(serverId)) startingServerId = "";
+                    refreshServerState();
+                });
+            }
         });
     }
 
     @Override public void dispose() {
         disposed = true;
         refreshTimer.stop();
+        firefly.dispose();
         synchronized (pendingOutput) { pendingOutput.setLength(0); }
     }
 
@@ -1504,6 +1580,74 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         ServerProfile server = selectedServer();
         if (server == null || !Objects.equals(server.id, statusServerId)) return new DeploymentStatusView("NOT DEPLOYED", null);
         return deploymentStatuses.getOrDefault(deploymentName, new DeploymentStatusView("NOT DEPLOYED", null));
+    }
+
+    private static void configureTableAppearance(JTable table) {
+        table.setShowGrid(false);
+        table.setIntercellSpacing(new Dimension(0, 0));
+        table.getTableHeader().setReorderingAllowed(false);
+        table.setSelectionBackground(UIManager.getColor("Table.selectionBackground"));
+    }
+
+    private void applyFireflyPreferences() {
+        var preferences = WildFlyProjectSettings.getInstance(project).getState();
+        firefly.setVisible(preferences.showFirefly);
+        firefly.setReducedMotion(preferences.reduceFireflyMotion);
+    }
+
+    private void updateFirefly() {
+        var status = project.getService(BuildLifecycleService.class).status();
+        FireflyIndicator.Mode mode;
+        if (status.active()) mode = FireflyIndicator.Mode.WORKING;
+        else if (displayedFailure != null) mode = FireflyIndicator.Mode.ATTENTION;
+        else if (selectedServer() != null && selectedServer().id.equals(startingServerId)) mode = FireflyIndicator.Mode.STARTING;
+        else if (deploymentStatuses.values().stream().anyMatch(value -> "DEPLOYING".equals(value.state()))) mode = FireflyIndicator.Mode.WORKING;
+        else if (deploymentStatuses.values().stream().anyMatch(value -> "FAILED".equals(value.state()))) mode = FireflyIndicator.Mode.ATTENTION;
+        else mode = switch (visibleServerState) {
+            case MANAGED, MANAGED_DEBUG, DETECTED -> FireflyIndicator.Mode.READY;
+            case PORT_BUSY, OTHER_CONFIGURATION -> FireflyIndicator.Mode.ATTENTION;
+            case STOPPING -> FireflyIndicator.Mode.WORKING;
+            default -> FireflyIndicator.Mode.RESTING;
+        };
+        firefly.setMode(mode);
+    }
+
+    private void refreshFailure() {
+        displayedFailure = project.getService(OperationFeedback.class).latest();
+        failureBanner.showFailure(displayedFailure);
+        updateFirefly();
+    }
+
+    private void openFailureAction(OperationFeedback.Failure failure, OperationFeedback.Action action) {
+        onUi(() -> {
+            if (action == OperationFeedback.Action.ACTIVITY) {
+                append(failure.title() + ": " + failure.detail() + "\n" + failure.hint());
+                tabs.setSelectedIndex(1);
+                return;
+            }
+            if (action == OperationFeedback.Action.SERVICE_SETTINGS) {
+                if (WildFlyProjectSettings.getInstance(project).services().stream().noneMatch(service -> service.id.equals(failure.serviceId()))) {
+                    append("The affected service is no longer in this project. Use Remembered Sources for external services.");
+                    tabs.setSelectedIndex(1);
+                    return;
+                }
+                refreshServiceTablePreservingSelection();
+                selectServiceById(failure.serviceId());
+                tabs.setSelectedIndex(0);
+                openSelectedServiceDetails();
+                return;
+            }
+            refreshServers();
+            if (failure.serverId().isBlank() || !selectServerById(failure.serverId())) {
+                append("The affected server profile no longer exists. Add or select a server in Services.");
+                tabs.setSelectedIndex(1);
+                return;
+            }
+            saveSelectedServer();
+            serverLog.setProfile(selectedServer());
+            if (action == OperationFeedback.Action.SERVER_LOG) tabs.setSelectedComponent(serverLog);
+            else { tabs.setSelectedIndex(0); editServer(); }
+        });
     }
 
     private static JPanel compactToolbar(JComponent... components) {
@@ -1573,6 +1717,8 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
         public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
                                                        boolean hasFocus, int row, int column) {
             JLabel label = (JLabel) super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+            label.putClientProperty("html.disable", Boolean.TRUE);
+            label.setBorder(JBUI.Borders.empty(0, 6));
             String full = value == null ? "" : value.toString();
             int width = table.getColumnModel().getColumn(column).getWidth() - JBUI.scale(12);
             label.setText(ellipsize(full, label.getFontMetrics(label.getFont()), Math.max(width, JBUI.scale(40))));
@@ -1580,7 +1726,7 @@ public final class WildFlyManagerPanel extends JPanel implements Disposable {
             if (modelRow >= 0 && modelRow < projectState().services.size()) {
                 ServiceProfile service = projectState().services.get(modelRow);
                 String path = ServicePresentation.buildPathTooltip(service);
-                label.setToolTipText(path == null || path.isBlank() ? full : "<html>" + full + "<br>" + path + "</html>");
+                label.setToolTipText(path == null || path.isBlank() ? full : full + " — " + path);
             }
             return label;
         }

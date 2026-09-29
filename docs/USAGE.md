@@ -35,6 +35,15 @@ Server controls are deliberately compact: Start, Debug, Stop, and a chevron menu
 
 The service list uses IntelliJ's collection toolbar for Add/Edit/Remove/Discover. Shift-click selects a range and Ctrl/Cmd-click toggles individual rows. Services are sorted lexicographically by their hierarchy-aware display name.
 
+The firefly beside server status rests when stopped, glows while running, and
+animates during work. A successful build or observed deployment gets a brief pulse.
+Use **More server actions → Show firefly / Reduce firefly motion** to control it.
+Animations pause when hidden. An attention state never replaces the text status.
+
+Failures remain visible until dismissed, with **View activity** and relevant
+service/server actions. These actions use the affected profile even if you have
+since changed selection. Check the log before retrying a timed-out deployment.
+
 ## Project services
 
 Each configured service stores:

@@ -17,13 +17,19 @@
         </ul>
         <p>Requires a local WildFly installation in standalone mode. No server download or automatic
         build occurs on first use. Domain mode and remote deployment management are not supported.</p>
-        <p><a href="https://github.com/LowLvel/wildfly-community-runner#first-use">Getting started</a> ·
+        <p><a href="https://github.com/LowLvel/wildfly-community-runner#quick-start">Getting started</a> ·
         <a href="https://github.com/LowLvel/wildfly-community-runner/blob/main/docs/TROUBLESHOOTING.md">Troubleshooting</a> ·
         <a href="https://github.com/LowLvel/wildfly-community-runner/issues">Report an issue</a></p>
         <p>Independent community project. Not affiliated with or endorsed by Red Hat or JetBrains.</p>
     ]]></description>
 
     <change-notes><![CDATA[
+        <p><b>0.6.1</b></p>
+        <ul>
+            <li>Optional firefly status indicator with reduced-motion and hide controls.</li>
+            <li>Dismissible failure details and actions for the affected service or server.</li>
+            <li>Clearer empty states and quieter service tables.</li>
+        </ul>
         <p><b>0.6.0</b></p>
         <ul>
             <li>Native server Run/Debug and Attach configurations, with shared process ownership.</li>

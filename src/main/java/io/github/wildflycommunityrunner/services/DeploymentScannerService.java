@@ -369,7 +369,7 @@ public final class DeploymentScannerService {
 
     private static void submitTarget(Project project, ServerProfile profile, String deploymentName, String operation,
                                      Consumer<String> output, Consumer<Boolean> completion, ScannerOperation action) {
-        ApplicationManager.getApplication().executeOnPooledThread(() -> complete(project, operation, output, completion, () -> {
+        ApplicationManager.getApplication().executeOnPooledThread(() -> complete(project, operation, output, completion, profile.id, () -> {
             Path target = WildFlyPaths.deploymentsDir(profile).resolve(safeDeploymentName(deploymentName));
             return DeploymentCoordinator.getInstance().withTarget(project, target, action::run);
         }));
@@ -378,13 +378,18 @@ public final class DeploymentScannerService {
     // Single completion boundary for success, failure, cancellation, and project shutdown.
     static void complete(Project project, String operation, Consumer<String> output,
                          Consumer<Boolean> completion, ScannerOperation action) {
+        complete(project, operation, output, completion, "", action);
+    }
+
+    private static void complete(Project project, String operation, Consumer<String> output,
+                                 Consumer<Boolean> completion, String serverId, ScannerOperation action) {
         boolean success = false;
         try {
             if (!project.isDisposed()) success = action.run();
         } catch (ArtifactChangedException changed) {
             out(output, "Auto Redeploy is waiting for the newer artifact to finish writing.");
         } catch (Exception error) {
-            PluginNotifications.failure(project, operation, error, output);
+            PluginNotifications.failure(project, operation, error, output, "", serverId);
         } finally {
             if (completion != null) completion.accept(success);
         }

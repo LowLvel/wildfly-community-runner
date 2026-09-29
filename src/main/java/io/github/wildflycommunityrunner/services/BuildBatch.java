@@ -10,7 +10,9 @@ import java.util.function.Consumer;
 /** Sequential build/deploy orchestration, independent of any Swing component. */
 public final class BuildBatch {
     public enum Mode { AUTO, FORCE_DEPLOY, BUILD_ONLY }
-    public record Status(String text, int completed, int total, boolean active) {}
+    public record Status(String text, int completed, int total, boolean active, BuildOperation.Outcome outcome) {
+        public Status(String text, int completed, int total, boolean active) { this(text, completed, total, active, null); }
+    }
     public record Result(BuildOperation.Outcome outcome, String detail, boolean failureReported) {}
     public interface Backend {
         BuildOperation build(ServiceProfile service);
@@ -147,7 +149,8 @@ public final class BuildBatch {
     private void finish(BuildOperation.Outcome outcome, String detail, boolean reported) {
         if (completion.isDone()) return;
         release();
-        update(detail, false);
+        status = new Status(detail, index, services.size(), false, outcome);
+        progress.accept(status);
         completion.complete(new Result(outcome, detail, reported));
     }
     private void update(String text, boolean active) {
